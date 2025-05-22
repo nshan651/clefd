@@ -1,0 +1,31 @@
+* Input
+This program sets up libinput with a udev backend, which is a common way to use it. It then enters a loop, retrieves events, and prints information specifically for keyboard key events, as well as notifying about devices being added or removed.
+
+To compile and run this code:
+
+    Install Dependencies: Make sure you have libinput and libudev development libraries installed.
+        On Debian/Ubuntu: sudo apt-get install libinput-dev libudev-dev
+        On Fedora: sudo dnf install libinput-devel systemd-devel (systemd-devel provides libudev)
+        On Arch Linux: sudo pacman -S libinput systemd (systemd provides libudev, headers are usually included)
+
+    Save: Save the code as libinput_reader.c.
+
+    Compile:
+    Bash
+
+gcc -o libinput_reader libinput_reader.c $(pkg-config --cflags --libs libinput libudev)
+
+Run:
+You'll likely need root privileges to access the raw input device files:
+Bash
+
+    sudo ./libinput_reader
+
+    Try pressing some keys on your keyboard, and you should see output indicating the keycodes and their states (pressed/released). Press Ctrl+C to stop the program.
+
+This example is quite basic. A more advanced application would:
+
+    Use libinput_get_fd() with select() or poll() for non-blocking event handling.
+    Implement proper signal handling (e.g., for SIGINT) to clean up resources gracefully.
+    Use libxkbcommon in conjunction with libinput to translate raw keycodes into keysyms (like 'A', 'Enter', 'Shift_L') and characters, taking into account the current keyboard layout.
+    Handle a wider variety of event types (mouse, touch, gesture, etc.).
