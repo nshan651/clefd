@@ -1,8 +1,7 @@
 (use-modules (guix packages)
-             (gnu packages admin)    ; For pkg-config
-             (gnu packages linux)    ; For libinput, libudev
-             (gnu packages commencement)    ; gcc-toolchain
-             )
+             (gnu packages admin)
+             (gnu packages linux)
+             (gnu packages commencement))
 
 (specifications->manifest
  '("gcc-toolchain"

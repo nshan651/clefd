@@ -16,3 +16,5 @@
 (F4 . (echo "Hello World!"))
 
 (F9 . (guix shell --help))
+
+((Control_L F3) . (echo "Hello Keychording!"))

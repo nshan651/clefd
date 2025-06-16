@@ -1,19 +1,3 @@
-;; (define (read-config-file filename)
-;;   "Parse the user's config.scm file and return an association list."
-;;   (call-with-input-file filename
-;;     (lambda (port)
-;;       (let loop ((exprs '()))
-;;         (let ((expr (read port)))
-;;           (if (eof-object? expr)
-;;               (reverse exprs)
-;;               (loop (cons expr exprs))))))))
-
-;;; Alternatively, we can use `call-with-input-file' on an entire list in one pass!
-;;; Just enclose the definitions with quote, quasiquote, or `list'.
-;;; We can also call `eval' on this.
-;; (define (read-config-file filename)
-;;   (call-with-input-file filename read))
-
 (use-modules (srfi srfi-1)
 	     (ice-9 rdelim))
 
@@ -22,14 +6,14 @@
 (define *keybindings* '())
 
 (define (read-config-file filename)
-  "Parse the user's config.scm file."
-  (with-input-from-file filename
-    (lambda ()
-      (let loop ((keybindings '()))
-	(let ((expr (read)))
-	      (if (eof-object? expr)
-		  (reverse keybindings)
-		  (loop (cons expr keybindings))))))))
+  "Parse the user's config.scm file and return an association list."
+  (call-with-input-file filename
+    (lambda (port)
+      (let loop ((exprs '()))
+        (let ((expr (read port)))
+          (if (eof-object? expr)
+              (reverse exprs)
+              (loop (cons expr exprs))))))))
 
 (define (exec-action keypress)
   "Look up the key-symbol in the keybindings and execute the associated command."
@@ -53,7 +37,7 @@
 	   (apply system* program args))))))))
 
 (define (process-keypress port)
-  "Main loop to process keypresses as they come in."
+  "Main loop to process key presses as they appear."
   (let ((line (read-line port)))
     ;; when the C daemon closes, read-line will return EOF.
     (unless (eof-object? line)
@@ -64,9 +48,6 @@
   (set! *keybindings*
 	(read-config-file *config-path*))
 
-  ;; (write *keybindings*) 
-  ;; (newline)
-  (call-with-input-file *fifo-path* process-keypress)
-  )
+  (call-with-input-file *fifo-path* process-keypress))
 
 (main)
