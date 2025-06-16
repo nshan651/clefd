@@ -12,7 +12,7 @@
       (let loop ((exprs '()))
         (let ((expr (read port)))
           (if (eof-object? expr)
-              (reverse exprs)
+              exprs
               (loop (cons expr exprs))))))))
 
 (define (exec-action keypress)
@@ -20,11 +20,6 @@
   (let ((keymap (assoc keypress *keybindings*)))
     (when keymap
       (let ((cmd (cdr keymap)))
-
-       (display "Executing command for key: ")
-       (write keypress)
-       (newline)
-
        (cond
 	;; Command is a symbol.
 	((symbol? cmd)
@@ -36,12 +31,20 @@
 	       (args (map object->string (cdr cmd))))
 	   (apply system* program args))))))))
 
+(define (line->key-symbols line)
+  "Convert a line of space-separated key names to either a single symbol
+or a list of symbols, depending on the number of keys."
+  (let ((symbols (map string->symbol (string-split line #\space))))
+    (if (= (length symbols) 1)
+	(car symbols)
+	symbols)))
+
 (define (process-keypress port)
   "Main loop to process key presses as they appear."
   (let ((line (read-line port)))
     ;; when the C daemon closes, read-line will return EOF.
     (unless (eof-object? line)
-      (exec-action (string->symbol line))
+      (exec-action (line->key-symbols line))
       (process-keypress port))))
 
 (define (main)
