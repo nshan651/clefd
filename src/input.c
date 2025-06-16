@@ -13,17 +13,32 @@
 #include <string.h> // For strerror
 #include <unistd.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <xkbcommon/xkbcommon.h>
 
-// Define the path for our named pipe
+// Define the path for our named pipe.
 #define FIFO_PATH "/tmp/clef-daemon.fifo"
 
+// Maximum number of keys that can be held down simultaneously in a chord.
+#define MAX_PRESSED_KEYS 16
+
+// Array to store the keycodes of currently pressed keys.
+static xkb_keycode_t pressed_keys[MAX_PRESSED_KEYS];
+// Counter for the number of keys currently pressed.
+static int num_pressed_keys = 0;
+
 /**
- * This function is called by libinput to open an input device file.
- * It needs to return a file descriptor.
+ * @brief Comparison function for qsort to sort modifier names alphabetically.
  */
-static int open_restricted(const char *path, int flags, void *user_data)
-{
+static int compare_strings(const void *a, const void *b) {
+  return strcmp(*(const char **)a, *(const char **)b);
+}
+
+/**
+ * @brief Opens a device file. Required by libinput.
+ * @return File descriptor on success, or -errno on failure.
+ */
+static int open_restricted(const char *path, int flags, void *user_data) {
   int fd = open(path, flags);
   if (fd < 0) {
     fprintf(stderr, "Failed to open %s: %s\n", path, strerror(errno));
@@ -33,7 +48,7 @@ static int open_restricted(const char *path, int flags, void *user_data)
 }
 
 /**
- * Called by libinput to close a file descriptor that was previously opened.
+ * @brief Closes a device file. Required by libinput.
  */
 static void close_restricted(int fd, void *user_data)
 {
@@ -50,35 +65,175 @@ static const struct libinput_interface interface = {
   .close_restricted = close_restricted,
 };
 
-int key_mapper(int fifo_fd, struct xkb_state *state, xkb_keycode_t keycode) {
-  xkb_keysym_t keysym;
-  char keysym_name[64];
-
-  // Note that evdev(event device)/libinput uses keycodes starting from 0, but
-  // XKB uses keycodes starting from 8
-  keycode += 8;
-  keysym = xkb_state_key_get_one_sym(state, keycode);
-
-  // Translate keysym to a string.
-  xkb_keysym_get_name(keysym, keysym_name, sizeof(keysym_name));
-
-  printf("xkb_keycode: %d, keysym: %d, key_name: %s\n\n",
-	 keycode,
-	 keysym,
-         keysym_name);
-
-  // Write the key name followed by a newline to the named pipe.
-  // dprintf is a convenient function to print formatted output to a file descriptor.
-  if (dprintf(fifo_fd, "%s\n", keysym_name) < 0) {
-    perror("Failed to write to FIFO.");
+/**
+ * @brief Checks if a keysym is a modifier key.
+ */
+static bool is_modifier_keysym(xkb_keysym_t keysym) {
+  switch (keysym) {
+  case XKB_KEY_Shift_L:
+  case XKB_KEY_Shift_R:
+  case XKB_KEY_Control_L:
+  case XKB_KEY_Control_R:
+  case XKB_KEY_Alt_L:
+  case XKB_KEY_Alt_R:
+  case XKB_KEY_Super_L:
+  case XKB_KEY_Super_R:
+  case XKB_KEY_Meta_L:
+  case XKB_KEY_Meta_R:
+  case XKB_KEY_Hyper_L:
+  case XKB_KEY_Hyper_R:
+  case XKB_KEY_Caps_Lock:
+  case XKB_KEY_Num_Lock:
+  case XKB_KEY_Scroll_Lock:
+    return true;
+  default:
+    return false;
   }
-
-  return 0;
 }
 
+/**
+ * @brief Adds a keycode to our list of currently pressed keys.
+ * @param keycode The XKB keycode to add.
+ */
+void add_key(xkb_keycode_t keycode) {
+  if (num_pressed_keys >= MAX_PRESSED_KEYS) {
+    fprintf(stderr, "Warning: Maximum number of pressed keys exceeded.\n");
+    return;
+  }
+  // Prevent duplicates.
+  for (int i = 0; i < num_pressed_keys; i++) {
+    if (pressed_keys[i] == keycode) {
+      return;
+    }
+  }
+  pressed_keys[num_pressed_keys++] = keycode;
+}
 
 /**
- * Create an event loop to read event devices and key presses.
+ * @brief Removes a keycode from our list of currently pressed keys.
+ * @param keycode The XKB keycode to remove.
+ */
+void remove_key(xkb_keycode_t keycode) {
+  int found_idx = -1;
+  for (int i = 0; i < num_pressed_keys; i++) {
+    if (pressed_keys[i] == keycode) {
+      found_idx = i;
+      break;
+    }
+  }
+
+  if (found_idx == -1) {
+    return;
+  }
+
+  // Shift remaining elements to fill the gap.
+  for (int i = found_idx; i < num_pressed_keys - 1; i++) {
+    pressed_keys[i] = pressed_keys[i + 1];
+  }
+  num_pressed_keys--;
+}
+
+/**
+ * @brief Constructs a chord string and sends it if it's valid.
+ *
+ * A valid chord consists of one or more modifiers and EXACTLY ONE non-modifier
+ * key. The resulting string is canonical: modifiers are sorted alphabetically,
+ * followed by the single non-modifier key, all space-separated.
+ *
+ * @param fifo_fd The file descriptor for the named pipe.
+ * @param state The current XKB state for keycode-to-keysym translation.
+ */
+void send_chord_event(int fifo_fd, struct xkb_state *state) {
+  char chord_str[256] = {0};
+  char *modifier_names[MAX_PRESSED_KEYS];
+  char *key_names[MAX_PRESSED_KEYS];
+  int num_modifiers = 0;
+  int num_keys = 0;
+
+  // A buffer to hold the actual string names, since our arrays hold pointers.
+  char temp_name_buffer[MAX_PRESSED_KEYS][64];
+
+  // Separate all currently pressed keys into modifiers and regular keys.
+  for (int i = 0; i < num_pressed_keys; i++) {
+    xkb_keycode_t keycode = pressed_keys[i];
+    xkb_keysym_t keysym = xkb_state_key_get_one_sym(state, keycode);
+    xkb_keysym_get_name(keysym, temp_name_buffer[i], 64);
+
+    if (is_modifier_keysym(keysym)) {
+      modifier_names[num_modifiers++] = temp_name_buffer[i];
+    } else {
+      key_names[num_keys++] = temp_name_buffer[i];
+    }
+  }
+
+  // Reject all instances with multiple non-modifier keys.
+  if (num_keys != 1) {
+    return;
+  }
+
+  // Sort modifiers alphabetically for a canonical representation.
+  qsort(modifier_names, num_modifiers, sizeof(char *), compare_strings);
+
+  // Build the final chord string.
+  for (int i = 0; i < num_modifiers; i++) {
+    strcat(chord_str, modifier_names[i]);
+    strcat(chord_str, " ");
+  }
+
+  // Append the single non-modifier key.
+  strcat(chord_str, key_names[0]);
+
+  // Write the chord string to the named pipe.
+  printf("Dispatching chord: %s\n", chord_str);
+  if (dprintf(fifo_fd, "%s\n", chord_str) < 0) {
+    perror("Failed to write chord to FIFO");
+  }
+}
+
+/**
+ * @brief Handle keyboard events based on key presses or releases.
+ *
+ * @param fifo_fd The file descriptor for the named pipe.
+ * @param state The current XKB state for keycode-to-keysym translation.
+ * @param event The base event type.
+ */
+void keyboard_event_handler(int fifo_fd,
+			    struct xkb_state *state,
+			    struct libinput_event *event) {
+  struct libinput_event_keyboard *kb_event =
+      libinput_event_get_keyboard_event(event);
+  // XKB keycodes are offset by 8 from libinput/evdev keycodes.
+  xkb_keycode_t xkb_code = libinput_event_keyboard_get_key(kb_event) + 8;
+  enum libinput_key_state key_state =
+      libinput_event_keyboard_get_key_state(kb_event);
+  uint32_t time = libinput_event_keyboard_get_time(kb_event);
+
+  printf("Keyboard Key: time=%u, keycode=%u (%s)\n", time, xkb_code,
+         (key_state == LIBINPUT_KEY_STATE_PRESSED) ? "pressed" : "released");
+
+  if (key_state == LIBINPUT_KEY_STATE_PRESSED) {
+    // Add the key to our state.
+    add_key(xkb_code);
+
+    // Check if the pressed key is a non-modifier. If so, it's the
+    // trigger for the chord.
+    xkb_keysym_t keysym = xkb_state_key_get_one_sym(state, xkb_code);
+    if (!is_modifier_keysym(keysym)) {
+      send_chord_event(fifo_fd, state);
+    }
+  }
+  else if (key_state == LIBINPUT_KEY_STATE_RELEASED) {
+    // Remove the key from our state.
+    remove_key(xkb_code);
+  }
+}
+
+/**
+ * @brief Main event loop to read key events and process chords.
+ *
+ * @param fifo_fd File descriptor for the named pipe.
+ * @param state The current XKB state object.
+ * @return 0 on success, 1 on failure.
  */
 int key_reader(int fifo_fd, struct xkb_state *state) {
   struct libinput *li;
@@ -109,7 +264,7 @@ int key_reader(int fifo_fd, struct xkb_state *state) {
   // that typically belong to a single user. "seat0" is the default.
   libinput_udev_assign_seat(li, "seat0");
 
-  while (1) {
+  while (true) {
 
     libinput_dispatch(li);
     event = libinput_get_event(li);
@@ -124,67 +279,13 @@ int key_reader(int fifo_fd, struct xkb_state *state) {
       continue;
     }
 
-    if (libinput_event_get_type(event) == LIBINPUT_EVENT_KEYBOARD_KEY) {
-      struct libinput_event_keyboard *kb_event =
-          libinput_event_get_keyboard_event(event);
-      uint32_t keycode = libinput_event_keyboard_get_key(kb_event);
-      enum libinput_key_state key_state =
-          libinput_event_keyboard_get_key_state(kb_event);
-      uint32_t time = libinput_event_keyboard_get_time(kb_event);
-
-      printf("Keyboard Key: time=%u, keycode=%u (%s)\n", time, keycode,
-             (key_state == LIBINPUT_KEY_STATE_PRESSED) ? "pressed"
-                                                       : "released");
-      key_mapper(fifo_fd, state, keycode);
+    // Only process keyboard events.
+    if (libinput_event_get_type(event) != LIBINPUT_EVENT_KEYBOARD_KEY) {
+      libinput_event_destroy(event);
+      continue;
     }
 
-    /*
-    // Process the event.
-    enum libinput_event_type type = libinput_event_get_type(event);
-
-    switch (type) {
-
-    case LIBINPUT_EVENT_NONE:
-      fprintf(stderr, "Receieved LIBINPUT_EVENT_NONE\n");
-      break;
-
-    case LIBINPUT_EVENT_DEVICE_ADDED: {
-      struct libinput_device *dev = libinput_event_get_device(event);
-      const char* dev_name = libinput_device_get_name(dev);
-      const char* sys_name = libinput_device_get_sysname(dev);
-      printf("Device added: %s (%s)\n",
-	     dev_name,
-	     sys_name);
-    } break;
-
-    case LIBINPUT_EVENT_DEVICE_REMOVED: {
-      struct libinput_device *dev = libinput_event_get_device(event);
-      const char* dev_name = libinput_device_get_name(dev);
-      const char* sys_name = libinput_device_get_sysname(dev);
-      printf("Device removed: %s (%s)\n", libinput_device_get_name(dev),
-	     libinput_device_get_sysname(dev));
-    } break;
-
-    case LIBINPUT_EVENT_KEYBOARD_KEY: {
-      printf("INPUT EVENT...");
-      struct libinput_event_keyboard *kb_event =
-          libinput_event_get_keyboard_event(event);
-      uint32_t keycode = libinput_event_keyboard_get_key(kb_event);
-      enum libinput_key_state key_state =
-          libinput_event_keyboard_get_key_state(kb_event);
-      uint32_t time = libinput_event_keyboard_get_time(kb_event);
-
-      printf("Keyboard Key: time=%u, keycode=%u (%s)\n", time, keycode,
-             (key_state == LIBINPUT_KEY_STATE_PRESSED) ? "pressed"
-                                                       : "released");
-      key_mapper(state, keycode);
-    } break;
-
-    default:
-      printf("Event type: %d\n", type);
-      break;
-    }
-    */
+    keyboard_event_handler(fifo_fd, state, event);
 
     libinput_event_destroy(event);
   }
@@ -195,17 +296,12 @@ int key_reader(int fifo_fd, struct xkb_state *state) {
   return 0;
 }
 
+/**
+ * @brief Main entry point.
+ */
 int main(int argc, char *argv[]) {
-  // Ignore the SIGPIPE signal. This prevents the daemon from crashing if a
-  // process reading its stdout (like in `daemon | logger`) disconnects.
-  // The write() or printf() call will instead fail with an EPIPE error,
-  // but the program will not terminate.
-  /* signal(SIGPIPE, SIG_IGN); */
-
-  // Create the named pipe (FIFO).
-  // The 0666 permission allows any user to read/write.
+  // Create the named pipe with read/write permission bits. 
   if (mkfifo(FIFO_PATH, 0666) == -1) {
-    // If the error is EEXIST, the file already exists, which is fine.
     if (errno != EEXIST) {
       perror("mkfifo failed");
       return 1;
@@ -240,7 +336,8 @@ int main(int argc, char *argv[]) {
 
   key_reader(fifo_fd, state);
 
-  // Free mem.
+  // Cleanup.
+  close(fifo_fd);
   xkb_state_unref(state);
   xkb_keymap_unref(keymap);
   xkb_context_unref(ctx);

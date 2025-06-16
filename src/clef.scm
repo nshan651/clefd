@@ -1,3 +1,19 @@
+;; (define (read-config-file filename)
+;;   "Parse the user's config.scm file and return an association list."
+;;   (call-with-input-file filename
+;;     (lambda (port)
+;;       (let loop ((exprs '()))
+;;         (let ((expr (read port)))
+;;           (if (eof-object? expr)
+;;               (reverse exprs)
+;;               (loop (cons expr exprs))))))))
+
+;;; Alternatively, we can use `call-with-input-file' on an entire list in one pass!
+;;; Just enclose the definitions with quote, quasiquote, or `list'.
+;;; We can also call `eval' on this.
+;; (define (read-config-file filename)
+;;   (call-with-input-file filename read))
+
 (use-modules (srfi srfi-1)
 	     (ice-9 rdelim))
 
@@ -14,22 +30,6 @@
 	      (if (eof-object? expr)
 		  (reverse keybindings)
 		  (loop (cons expr keybindings))))))))
-
-;; (define (read-config-file filename)
-;;   "Parse the user's config.scm file and return an association list."
-;;   (call-with-input-file filename
-;;     (lambda (port)
-;;       (let loop ((exprs '()))
-;;         (let ((expr (read port)))
-;;           (if (eof-object? expr)
-;;               (reverse exprs)
-;;               (loop (cons expr exprs))))))))
-
-;;; Alternatively, we can use `call-with-input-file' on an entire list in one pass!
-;;; Just enclose the definitions with quote, quasiquote, or `list'.
-;;; We can also call `eval' on this.
-;; (define (read-config-file filename)
-;;   (call-with-input-file filename read))
 
 (define (exec-action keypress)
   "Look up the key-symbol in the keybindings and execute the associated command."
@@ -64,13 +64,9 @@
   (set! *keybindings*
 	(read-config-file *config-path*))
 
-  (write *keybindings*) 
-  (newline)
-
+  ;; (write *keybindings*) 
+  ;; (newline)
   (call-with-input-file *fifo-path* process-keypress)
-
-  ;; (exec-action 'F4)
-
   )
 
 (main)
