@@ -1,10 +1,11 @@
+PROG := input
 PKGFLAGS := $(shell pkg-config --cflags --libs libinput libudev xkbcommon)
 
 all:
-	gcc -o ./bin/input ./src/input.c $(PKGFLAGS)
+	gcc -o ./bin/$(PROG) ./src/$(PROG).c $(PKGFLAGS)
 
 run: 
-	./bin/input
+	./bin/$(PROG)
 
 clean:
-	rm ./bin/input
+	rm ./bin/$(PROG)

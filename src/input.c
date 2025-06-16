@@ -4,13 +4,14 @@
  * This program requires the user to be part of the `input` group
  * in order to access /dev/input/event* devices.
  */
-#include <stdio.h>
-#include <fcntl.h>      // For O_RDONLY, O_WRONLY, O_RDWR, O_NONBLOCK
-#include <unistd.h>
 #include <errno.h>
-#include <string.h>     // For strerror
-#include <libudev.h>
+#include <fcntl.h> // For O_RDONLY, O_WRONLY, O_RDWR, O_NONBLOCK
 #include <libinput.h>
+#include <libudev.h>
+#include <poll.h>
+#include <stdio.h>
+#include <string.h> // For strerror
+#include <unistd.h>
 #include <xkbcommon/xkbcommon.h>
 
 /**
@@ -19,8 +20,12 @@
  */
 static int open_restricted(const char *path, int flags, void *user_data)
 {
-        int fd = open(path, flags);
-        return fd < 0 ? -errno : fd;
+  int fd = open(path, flags);
+  if (fd < 0) {
+    fprintf(stderr, "Failed to open %s: %s\n", path, strerror(errno));
+    return -errno;
+  }
+  return fd;
 }
 
 /**
@@ -28,7 +33,7 @@ static int open_restricted(const char *path, int flags, void *user_data)
  */
 static void close_restricted(int fd, void *user_data)
 {
-        close(fd);
+  close(fd);
 }
 
 /**
@@ -37,13 +42,11 @@ static void close_restricted(int fd, void *user_data)
  * for opening and closing device files.
  */
 static const struct libinput_interface interface = {
-    .open_restricted = open_restricted,
-    .close_restricted = close_restricted,
+  .open_restricted = open_restricted,
+  .close_restricted = close_restricted,
 };
 
 int key_mapper(struct xkb_state *state, xkb_keycode_t keycode) {
-  /* <key event structure> event; */
-  /* xkb_keycode_t keycode; */
   xkb_keysym_t keysym;
   char keysym_name[64];
 
@@ -58,9 +61,10 @@ int key_mapper(struct xkb_state *state, xkb_keycode_t keycode) {
   // Translate keysym to a string.
   xkb_keysym_get_name(keysym, keysym_name, sizeof(keysym_name));
 
-  printf("keycode: %d\n", keycode);
-  printf("keysym: %d\n", keysym);
-  printf("key: %s\n\n", keysym_name);
+  printf("xkb_keycode: %d, keysym: %d, key_name: %s\n\n",
+	 keycode,
+	 keysym,
+         keysym_name);
 
   return 0;
 }
@@ -73,9 +77,14 @@ int key_reader(struct xkb_state *state) {
   struct libinput *li;
   struct libinput_event *event;
   struct udev *udev;
+  struct pollfd pfd;
 
   // Create a udev context.
   udev = udev_new();
+  if (!udev) {
+    fprintf(stderr, "Failed to create udev context\n");
+    return 1;
+  }
 
   // Create a libinput context.
   // We pass our interface (for opening/closing files) and the udev context.
@@ -83,12 +92,19 @@ int key_reader(struct xkb_state *state) {
   // open_restricted and close_restricted if needed.
   // NOTE: Show seats on linux with `loginctl list-seats`
   li = libinput_udev_create_context(&interface, NULL, udev);
+  if (!li) {
+    fprintf(stderr, "Failed to create libinput context\n");
+    udev_unref(udev);
+    return 1;
+  }
 
   // Assign a "seat" to the libinput context.
   // A seat is a collection of input devices (e.g., a keyboard, mouse, touchscreen)
   // that typically belong to a single user. "seat0" is the default.
   libinput_udev_assign_seat(li, "seat0");
-  /* libinput_dispatch(li); */
+
+  // Get the file descriptor for polling.
+  //pfd.fd = libinput_get_fd(li);
 
   while (1) {
 
@@ -132,6 +148,7 @@ int key_reader(struct xkb_state *state) {
     } break;
 
     case LIBINPUT_EVENT_KEYBOARD_KEY: {
+      printf("INPUT EVENT...");
       struct libinput_event_keyboard *kb_event =
           libinput_event_get_keyboard_event(event);
       uint32_t keycode = libinput_event_keyboard_get_key(kb_event);
@@ -165,18 +182,30 @@ int main(int argc, char *argv[]) {
   struct xkb_state *state;
 
   ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-  if (!ctx) return 1;
+  if (!ctx) {
+    fprintf(stderr, "Failed to create xkb_context\n");
+    return 1;
+  }
 
   // Use system keyboard layout by passing NULL for xkb rules.
   keymap = xkb_keymap_new_from_names(ctx,
 				     NULL,
 				     XKB_KEYMAP_COMPILE_NO_FLAGS);
-  if (!keymap) return 1;
+  if (!keymap) {
+    fprintf(stderr, "Failed to create xkb_keymap\n");
+    xkb_context_unref(ctx);
+    return 1;
+  }
 
   // The xkb state remembers things like which keyboard modifiers and LEDs are
   // active
   state = xkb_state_new(keymap);
-  if (!state) return 1;
+  if (!state) {
+    fprintf(stderr, "Failed to create xkb_state\n");
+    xkb_keymap_unref(keymap);
+    xkb_context_unref(ctx);
+    return 1;
+  }
 
   key_reader(state);
 

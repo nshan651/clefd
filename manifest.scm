@@ -4,4 +4,10 @@
              (gnu packages commencement)    ; gcc-toolchain
              )
 
-(specifications->manifest '("gcc-toolchain" "make" "git" "pkg-config" "libinput" "libxkbcommon"))
+(specifications->manifest
+ '("gcc-toolchain"
+   "make"
+   "git"
+   "pkg-config"
+   "libinput"
+   "libxkbcommon"))

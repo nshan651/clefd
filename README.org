@@ -2,6 +2,8 @@
 
 A universal keybindings manager.
 
+* wlroots-based hotkey daemon
+
 * Notes
 There are a few considerations for how X11 and Wayland handle keyboard inputs:
 ** X11
