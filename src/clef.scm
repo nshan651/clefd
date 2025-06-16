@@ -1,7 +1,9 @@
-(use-modules (srfi srfi-1))
+(use-modules (srfi srfi-1)
+	     (ice-9 rdelim))
 
-(define *keybindings* (make-hash-table))
-(define *raw-kbd-data* '())
+(define *fifo-path* "/tmp/clef-daemon.fifo")
+(define *config-path* "/home/nick/git/clef/config.scm")
+(define *keybindings* '())
 
 (define (read-config-file filename)
   "Parse the user's config.scm file."
@@ -13,6 +15,16 @@
 		  (reverse keybindings)
 		  (loop (cons expr keybindings))))))))
 
+;; (define (read-config-file filename)
+;;   "Parse the user's config.scm file and return an association list."
+;;   (call-with-input-file filename
+;;     (lambda (port)
+;;       (let loop ((exprs '()))
+;;         (let ((expr (read port)))
+;;           (if (eof-object? expr)
+;;               (reverse exprs)
+;;               (loop (cons expr exprs))))))))
+
 ;;; Alternatively, we can use `call-with-input-file' on an entire list in one pass!
 ;;; Just enclose the definitions with quote, quasiquote, or `list'.
 ;;; We can also call `eval' on this.
@@ -20,33 +32,44 @@
 ;;   (call-with-input-file filename read))
 
 (define (exec-action keypress)
-  (let ((keymap (assoc keypress *raw-kbd-data*)))
+  "Look up the key-symbol in the keybindings and execute the associated command."
+  (let ((keymap (assoc keypress *keybindings*)))
     (when keymap
       (let ((cmd (cdr keymap)))
-	(cond
-	 ;; Command is a symbol.
-	 ((symbol? cmd)
-	  (system* (symbol->string cmd)))
 
-	 ;; Command is a list, assume it includes the program + args.
-	 ((list? cmd)
-	  (let ((program (object->string (car cmd)))
-		(args (map object->string (cdr cmd))))
-	    (apply system* program args))))))))
+       (display "Executing command for key: ")
+       (write keypress)
+       (newline)
+
+       (cond
+	;; Command is a symbol.
+	((symbol? cmd)
+	 (system* (symbol->string cmd)))
+	
+	;; Command is a list, assume it includes the program + args.
+	((list? cmd)
+	 (let ((program (object->string (car cmd)))
+	       (args (map object->string (cdr cmd))))
+	   (apply system* program args))))))))
+
+(define (process-keypress port)
+  "Main loop to process keypresses as they come in."
+  (let ((line (read-line port)))
+    ;; when the C daemon closes, read-line will return EOF.
+    (unless (eof-object? line)
+      (exec-action (string->symbol line))
+      (process-keypress port))))
 
 (define (main)
-  (set! *raw-kbd-data*
-	(read-config-file "/home/nick/git/clef/config.scm"))
+  (set! *keybindings*
+	(read-config-file *config-path*))
 
-  (write *raw-kbd-data*)
+  (write *keybindings*) 
   (newline)
 
-  ;; (define x (assoc '(Super_L Shift_L w) *raw-kbd-data*))
-  ;; (define x (assoc 'XF86AudioMute *raw-kbd-data*))
-  ;; (define x (assoc 'F5 *raw-kbd-data*))
-  ;; (write (cdr x))
+  (call-with-input-file *fifo-path* process-keypress)
 
-  (exec-action 'F9)
+  ;; (exec-action 'F4)
 
   )
 

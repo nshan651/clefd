@@ -12,7 +12,11 @@
 #include <stdio.h>
 #include <string.h> // For strerror
 #include <unistd.h>
+#include <signal.h>
 #include <xkbcommon/xkbcommon.h>
+
+// Define the path for our named pipe
+#define FIFO_PATH "/tmp/clef-daemon.fifo"
 
 /**
  * This function is called by libinput to open an input device file.
@@ -46,12 +50,9 @@ static const struct libinput_interface interface = {
   .close_restricted = close_restricted,
 };
 
-int key_mapper(struct xkb_state *state, xkb_keycode_t keycode) {
+int key_mapper(int fifo_fd, struct xkb_state *state, xkb_keycode_t keycode) {
   xkb_keysym_t keysym;
   char keysym_name[64];
-
-  // a=30, z=44
-  /* keycode = 30; */
 
   // Note that evdev(event device)/libinput uses keycodes starting from 0, but
   // XKB uses keycodes starting from 8
@@ -66,6 +67,12 @@ int key_mapper(struct xkb_state *state, xkb_keycode_t keycode) {
 	 keysym,
          keysym_name);
 
+  // Write the key name followed by a newline to the named pipe.
+  // dprintf is a convenient function to print formatted output to a file descriptor.
+  if (dprintf(fifo_fd, "%s\n", keysym_name) < 0) {
+    perror("Failed to write to FIFO.");
+  }
+
   return 0;
 }
 
@@ -73,11 +80,10 @@ int key_mapper(struct xkb_state *state, xkb_keycode_t keycode) {
 /**
  * Create an event loop to read event devices and key presses.
  */
-int key_reader(struct xkb_state *state) {
+int key_reader(int fifo_fd, struct xkb_state *state) {
   struct libinput *li;
   struct libinput_event *event;
   struct udev *udev;
-  struct pollfd pfd;
 
   // Create a udev context.
   udev = udev_new();
@@ -103,9 +109,6 @@ int key_reader(struct xkb_state *state) {
   // that typically belong to a single user. "seat0" is the default.
   libinput_udev_assign_seat(li, "seat0");
 
-  // Get the file descriptor for polling.
-  //pfd.fd = libinput_get_fd(li);
-
   while (1) {
 
     libinput_dispatch(li);
@@ -121,6 +124,21 @@ int key_reader(struct xkb_state *state) {
       continue;
     }
 
+    if (libinput_event_get_type(event) == LIBINPUT_EVENT_KEYBOARD_KEY) {
+      struct libinput_event_keyboard *kb_event =
+          libinput_event_get_keyboard_event(event);
+      uint32_t keycode = libinput_event_keyboard_get_key(kb_event);
+      enum libinput_key_state key_state =
+          libinput_event_keyboard_get_key_state(kb_event);
+      uint32_t time = libinput_event_keyboard_get_time(kb_event);
+
+      printf("Keyboard Key: time=%u, keycode=%u (%s)\n", time, keycode,
+             (key_state == LIBINPUT_KEY_STATE_PRESSED) ? "pressed"
+                                                       : "released");
+      key_mapper(fifo_fd, state, keycode);
+    }
+
+    /*
     // Process the event.
     enum libinput_event_type type = libinput_event_get_type(event);
 
@@ -166,6 +184,7 @@ int key_reader(struct xkb_state *state) {
       printf("Event type: %d\n", type);
       break;
     }
+    */
 
     libinput_event_destroy(event);
   }
@@ -177,37 +196,49 @@ int key_reader(struct xkb_state *state) {
 }
 
 int main(int argc, char *argv[]) {
-  struct xkb_context *ctx;
-  struct xkb_keymap *keymap;
-  struct xkb_state *state;
+  // Ignore the SIGPIPE signal. This prevents the daemon from crashing if a
+  // process reading its stdout (like in `daemon | logger`) disconnects.
+  // The write() or printf() call will instead fail with an EPIPE error,
+  // but the program will not terminate.
+  /* signal(SIGPIPE, SIG_IGN); */
 
-  ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-  if (!ctx) {
-    fprintf(stderr, "Failed to create xkb_context\n");
+  // Create the named pipe (FIFO).
+  // The 0666 permission allows any user to read/write.
+  if (mkfifo(FIFO_PATH, 0666) == -1) {
+    // If the error is EEXIST, the file already exists, which is fine.
+    if (errno != EEXIST) {
+      perror("mkfifo failed");
+      return 1;
+    }
+  }
+
+  printf("Daemon started. Waiting for a client to connect to %s...\n", FIFO_PATH);
+
+  // Open the FIFO for writing.
+  // This call will block until a client opens the pipe for reading.
+  int fifo_fd = open(FIFO_PATH, O_WRONLY);
+  if (fifo_fd == -1) {
+    perror("Failed to open FIFO for writing");
     return 1;
   }
 
-  // Use system keyboard layout by passing NULL for xkb rules.
-  keymap = xkb_keymap_new_from_names(ctx,
-				     NULL,
-				     XKB_KEYMAP_COMPILE_NO_FLAGS);
-  if (!keymap) {
-    fprintf(stderr, "Failed to create xkb_keymap\n");
-    xkb_context_unref(ctx);
-    return 1;
-  }
+  printf("Client connected. Ready to send keypresses.\n");
 
-  // The xkb state remembers things like which keyboard modifiers and LEDs are
-  // active
-  state = xkb_state_new(keymap);
-  if (!state) {
-    fprintf(stderr, "Failed to create xkb_state\n");
+  // Setup XKB.
+  struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+  struct xkb_keymap *keymap =
+    xkb_keymap_new_from_names(ctx, NULL, XKB_KEYMAP_COMPILE_NO_FLAGS);
+  struct xkb_state *state = xkb_state_new(keymap);
+
+  if (!ctx || !keymap || !state) {
+    fprintf(stderr, "Failed to initialize XKB\n");
+    xkb_state_unref(state);
     xkb_keymap_unref(keymap);
     xkb_context_unref(ctx);
     return 1;
   }
 
-  key_reader(state);
+  key_reader(fifo_fd, state);
 
   // Free mem.
   xkb_state_unref(state);
