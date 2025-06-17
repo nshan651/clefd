@@ -3,11 +3,8 @@
 
 (define *fifo-path* "/tmp/clefd.fifo")
 (define *config-path* "/home/nick/git/clef/config.scm")
-(define *keybindings* '())
-
-(define (read-config-file filename)
-  "Parse the user's config.scm file and return an association list."
-  (call-with-input-file filename
+(define *keybindings*
+  (call-with-input-file *config-path*
     (lambda (port)
       (let loop ((exprs '()))
         (let ((expr (read port)))
@@ -48,9 +45,6 @@ or a list of symbols, depending on the number of keys."
       (process-keypress port))))
 
 (define (main)
-  (set! *keybindings*
-	(read-config-file *config-path*))
-
   (call-with-input-file *fifo-path* process-keypress))
 
 (main)
