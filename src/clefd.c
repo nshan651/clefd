@@ -17,7 +17,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 // Define the path for our named pipe.
-#define FIFO_PATH "/tmp/clef-daemon.fifo"
+#define FIFO_PATH "/tmp/clefd.fifo"
 
 // Maximum number of keys that can be held down simultaneously in a chord.
 #define MAX_PRESSED_KEYS 16
@@ -26,12 +26,22 @@
 static xkb_keycode_t pressed_keys[MAX_PRESSED_KEYS];
 // Counter for the number of keys currently pressed.
 static int num_pressed_keys = 0;
+// Flag to control the main event loop.
+static volatile sig_atomic_t keep_running = 1;
 
 /**
  * @brief Comparison function for qsort to sort modifier names alphabetically.
  */
 static int compare_strings(const void *a, const void *b) {
   return strcmp(*(const char **)a, *(const char **)b);
+}
+
+/**
+ * @brief Signal handler for graceful shutdown
+ */
+void sigterm_handler(int signum) {
+    fprintf(stderr, "Received signal %d, initiating shutdown...\n", signum);
+    keep_running = 0;
 }
 
 /**
@@ -270,7 +280,7 @@ int key_reader(int fifo_fd, struct xkb_state *state) {
   pfd.fd = libinput_get_fd(li);
   pfd.events = POLLIN;
 
-  while (true) {
+  while (keep_running) {
 
     ret = poll(&pfd, 1, -1);
 
@@ -305,7 +315,6 @@ int key_reader(int fifo_fd, struct xkb_state *state) {
         libinput_event_destroy(event);
       }
     }
-
   }
 
   libinput_unref(li);
@@ -318,6 +327,10 @@ int key_reader(int fifo_fd, struct xkb_state *state) {
  * @brief Main entry point.
  */
 int main(int argc, char *argv[]) {
+  // Register signal handler for graceful shutdown.
+  signal(SIGTERM, sigterm_handler);
+  signal(SIGINT, sigterm_handler);
+
   // Create the named pipe with read/write permission bits. 
   if (mkfifo(FIFO_PATH, 0666) == -1) {
     if (errno != EEXIST) {
@@ -333,6 +346,7 @@ int main(int argc, char *argv[]) {
   int fifo_fd = open(FIFO_PATH, O_WRONLY);
   if (fifo_fd == -1) {
     perror("Failed to open FIFO for writing");
+    unlink(FIFO_PATH);
     return 1;
   }
 
@@ -349,13 +363,17 @@ int main(int argc, char *argv[]) {
     xkb_state_unref(state);
     xkb_keymap_unref(keymap);
     xkb_context_unref(ctx);
+    unlink(FIFO_PATH);
     return 1;
   }
 
   key_reader(fifo_fd, state);
 
+  printf("Daemon shutting down...\n");
+
   // Cleanup.
   close(fifo_fd);
+  unlink(FIFO_PATH);
   xkb_state_unref(state);
   xkb_keymap_unref(keymap);
   xkb_context_unref(ctx);

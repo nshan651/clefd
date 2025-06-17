@@ -1,7 +1,7 @@
 (use-modules (srfi srfi-1)
 	     (ice-9 rdelim))
 
-(define *fifo-path* "/tmp/clef-daemon.fifo")
+(define *fifo-path* "/tmp/clefd.fifo")
 (define *config-path* "/home/nick/git/clef/config.scm")
 (define *keybindings* '())
 
