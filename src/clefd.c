@@ -239,6 +239,8 @@ int key_reader(int fifo_fd, struct xkb_state *state) {
   struct libinput *li;
   struct libinput_event *event;
   struct udev *udev;
+  struct pollfd pfd;
+  int ret;
 
   // Create a udev context.
   udev = udev_new();
@@ -264,30 +266,46 @@ int key_reader(int fifo_fd, struct xkb_state *state) {
   // that typically belong to a single user. "seat0" is the default.
   libinput_udev_assign_seat(li, "seat0");
 
+  // Set up polling structure
+  pfd.fd = libinput_get_fd(li);
+  pfd.events = POLLIN;
+
   while (true) {
 
-    libinput_dispatch(li);
-    event = libinput_get_event(li);
+    ret = poll(&pfd, 1, -1);
 
-    if (!event) {
-      // No event available right now.
-      // Optimally, use select() or poll() on libinput_get_fd(li) to wait for
-      // events efficiently.
-      // For this basic example, we'll just continue the loop.
-      // A small sleep can prevent busy-waiting if no events are immediately available.
-      usleep(1000); // Sleep for 1ms
+    if (ret < 0) {
+      // Interrupted signal, retry polling.
+      if (errno == EINTR) {
+	continue;
+      }
+      fprintf(stderr, "poll() failed: %s\n", strerror(errno));
+      break;
+    }
+
+    // Timeout, should never happen when set to -1.
+    if (ret == 0) {
       continue;
     }
 
-    // Only process keyboard events.
-    if (libinput_event_get_type(event) != LIBINPUT_EVENT_KEYBOARD_KEY) {
-      libinput_event_destroy(event);
-      continue;
+    // Check for errors on the polling fd.
+    if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+      fprintf(stderr, "Error on libinput file descriptor\n");
+      break;
     }
 
-    keyboard_event_handler(fifo_fd, state, event);
+    if (pfd.revents & POLLIN) {
+      libinput_dispatch(li);
 
-    libinput_event_destroy(event);
+      while ((event = libinput_get_event(li)) != NULL) {
+        // Only process keyboard events.
+        if (libinput_event_get_type(event) == LIBINPUT_EVENT_KEYBOARD_KEY) {
+          keyboard_event_handler(fifo_fd, state, event);
+        }
+        libinput_event_destroy(event);
+      }
+    }
+
   }
 
   libinput_unref(li);
