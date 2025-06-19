@@ -331,7 +331,7 @@ int main(int argc, char *argv[]) {
   signal(SIGTERM, sigterm_handler);
   signal(SIGINT, sigterm_handler);
 
-  // Create the named pipe with read/write permission bits. 
+  // Create the named pipe with read/write permission bits.
   if (mkfifo(FIFO_PATH, 0666) == -1) {
     if (errno != EEXIST) {
       perror("mkfifo failed");

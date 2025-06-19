@@ -4,9 +4,13 @@
              (gnu packages commencement))
 
 (specifications->manifest
- '("gcc-toolchain"
+ '(
+   "gcc-toolchain"
    "make"
    "git"
    "pkg-config"
    "libinput"
-   "libxkbcommon"))
+   "eudev"
+   "libxkbcommon"
+   "guile"
+   ))

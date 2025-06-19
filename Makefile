@@ -1,5 +1,5 @@
 PROG := clefd
-PKGFLAGS := $(shell pkg-config --cflags --libs libinput libudev xkbcommon)
+PKGFLAGS := $(shell pkg-config --cflags --libs libinput libudev xkbcommon guile-3.0)
 CC := gcc
 CFLAGS := -Wall -Wextra -std=c11
 PREFIX ?= /usr/local
