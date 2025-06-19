@@ -1,12 +1,16 @@
 use anyhow::{anyhow, Context, Result};
-use input::{event::keyboard::{KeyboardEvent, KeyboardEventTrait}, Libinput, LibinputInterface};
+use input::{event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait}, Libinput, LibinputInterface};
 use signal_hook::{consts::{SIGINT, SIGTERM}, iterator::Signals};
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::os::unix::{fs::OpenOptionsExt, io::OwnedFd};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use xkbcommon::xkb;
+use xkbcommon::xkb::{keysyms, Keysym, Keycode};
+
+const MAX_PRESSED_KEYS: usize = 16;
 
 /// A simple interface for libinput to open and close devices.
 /// This is required by libinput to interact with the underlying system devices.
@@ -30,6 +34,91 @@ impl LibinputInterface for Interface {
     }
 }
 
+/// Manages the state of currently pressed keys for chord detection.
+struct ChordState {
+    pressed_keys: HashSet<xkb::Keycode>,
+}
+
+impl ChordState {
+    /// Creates a new, empty ChordState.
+    fn new() -> Self {
+        Self {
+            // Pre-allocate capacity for a reasonable number of keys.
+            pressed_keys: HashSet::with_capacity(MAX_PRESSED_KEYS),
+        }
+    }
+
+    /// Adds a keycode to the set of currently pressed keys.
+    /// The HashSet automatically handles duplicates.
+    fn add_key(&mut self, keycode: xkb::Keycode) {
+        if self.pressed_keys.len() >= MAX_PRESSED_KEYS {
+            eprintln!("Warning: Maximum number of pressed keys exceeded.");
+            return;
+        }
+        self.pressed_keys.insert(keycode);
+        println!("  -> Current Keys: {:?}", self.pressed_keys);
+    }
+
+    /// Removes a keycode from the set of currently pressed keys.
+    fn remove_key(&mut self, keycode: xkb::Keycode) {
+        self.pressed_keys.remove(&keycode);
+        println!("  -> Current Keys: {:?}", self.pressed_keys);
+    }
+
+    /// Constructs a chord string and sends it if it's valid.
+    ///
+    /// A valid chord consists of one or more modifiers and EXACTLY ONE non-modifier
+    /// key. The resulting string is canonical: modifiers are sorted alphabetically,
+    /// followed by the single non-modifier key, all space-separated.
+    fn send_chord_event(&self, xkb_state: &xkb::State) {
+        let mut modifier_names = Vec::new();
+        let mut key_names = Vec::new();
+
+        // Separate all currently pressed keys into modifiers and regular keys.
+        for &keycode in self.pressed_keys.iter() {
+            let keysym = xkb_state.key_get_one_sym(keycode);
+            let name = xkb::keysym_get_name(keysym);
+
+            if is_modifier_keysym(keysym) {
+                modifier_names.push(name);
+            } else {
+                key_names.push(name);
+            }
+        }
+
+        // A valid chord trigger has exactly one non-modifier key.
+        if key_names.len() != 1 {
+            return;
+        }
+
+        // Sort modifiers alphabetically for a canonical representation.
+        modifier_names.sort_unstable();
+
+        // Combine the sorted modifiers and the single key name.
+        let mut chord_parts = modifier_names;
+        chord_parts.extend(key_names); // Add the single key name
+        let chord_str = chord_parts.join(" ");
+
+        // Write the chord string.
+        println!("Dispatching chord: {}", chord_str);
+    }
+}
+
+/// Checks if a given keysym is a modifier key.
+fn is_modifier_keysym(keysym: Keysym) -> bool {
+    matches!(keysym.into(),
+        keysyms::KEY_Shift_L | keysyms::KEY_Shift_R |
+        keysyms::KEY_Control_L | keysyms::KEY_Control_R |
+        keysyms::KEY_Alt_L | keysyms::KEY_Alt_R |
+        keysyms::KEY_Meta_L | keysyms::KEY_Meta_R |
+        keysyms::KEY_Super_L | keysyms::KEY_Super_R |
+        keysyms::KEY_Hyper_L | keysyms::KEY_Hyper_R |
+        keysyms::KEY_Scroll_Lock |
+        keysyms::KEY_Caps_Lock |
+        keysyms::KEY_Shift_Lock
+    )
+}
+
 /// Handles a single keyboard event.
 ///
 /// This function is a placeholder for your actual chord processing logic.
@@ -38,20 +127,42 @@ impl LibinputInterface for Interface {
 /// # Arguments
 /// * `state` - A mutable reference to the XKB state.
 /// * `event` - The keyboard event to process.
-fn keyboard_event_handler(state: &mut xkb::State, event: &KeyboardEvent) {
-    let keycode = event.key();
-    let key_state = event.key_state();
+fn keyboard_event_handler(state: &mut xkb::State,
+			  chord_state: &mut ChordState,
+			  event: &KeyboardEvent) {
+
+    // Note: The keycode from libinput needs a +8 offset to match XKB keycodes.
+    let xkb_code: Keycode = (event.key() + 8).into();
+    let key_state: KeyState = event.key_state();
+
     println!(
         "Key Event: code={}, state={:?}",
-        keycode,
+        xkb_code.raw(),
         key_state,
     );
 
-    // Example of using xkbcommon to get the symbol for the key.
-    // Note: The keycode from libinput needs a +8 offset to match XKB keycodes.
-    let keysym = state.key_get_one_sym((keycode + 8).into());
-    let key_name = xkb::keysym_get_name(keysym);
-    println!("  -> Keysym: {} ({})", key_name, keysym.raw());
+    match key_state {
+        KeyState::Pressed => {
+            // Add the key to the keycord state.
+            chord_state.add_key(xkb_code);
+	    println!("PRESSES!");
+
+            // Check if the pressed key is a non-modifier. If so, it's the
+            // trigger for the chord.
+            let keysym = state.key_get_one_sym(xkb_code);
+            let key_name = xkb::keysym_get_name(keysym);
+            println!("  -> Keysym: {} ({})", key_name, keysym.raw());
+
+            if !is_modifier_keysym(keysym) {
+                chord_state.send_chord_event(state);
+            }
+        }
+        KeyState::Released => {
+            // Remove the key from our state.
+            chord_state.remove_key(xkb_code);
+	    println!("RELEASED!");
+        }
+    }
 }
 
 /// Main event loop to read key events and process chords.
@@ -63,6 +174,7 @@ fn keyboard_event_handler(state: &mut xkb::State, event: &KeyboardEvent) {
 /// * `state` - The XKB state object.
 /// * `keep_running` - An atomic boolean to control the event loop.
 fn run_event_loop(mut state: xkb::State,
+		  chord_state: &mut ChordState,
 		  keep_running: Arc<AtomicBool>) -> Result<()> {
     // Create a libinput context with a udev backend.
     // This allows libinput to discover and manage input devices automatically.
@@ -84,7 +196,7 @@ fn run_event_loop(mut state: xkb::State,
         for event in &mut libinput {
             // We only care about keyboard events.
             if let input::Event::Keyboard(kb_event) = event {
-                keyboard_event_handler(&mut state, &kb_event);
+                keyboard_event_handler(&mut state, chord_state, &kb_event);
             }
         }
     }
@@ -130,10 +242,14 @@ fn main() -> Result<()> {
     ).ok_or_else(|| anyhow!("Failed to create XKB keymap"))?;
 
     // Create an XKB state object from the keymap.
-    let state = xkb::State::new(&keymap);
+    let xkb_state = xkb::State::new(&keymap);
 
     // Run the main event loop.
-    if let Err(e) = run_event_loop(state, keep_running) {
+    // Create the state manager for our chord logic.
+    let mut chord_state = ChordState::new();
+    
+    // Run the main event loop.
+    if let Err(e) = run_event_loop(xkb_state, &mut chord_state, keep_running) {
         eprintln!("An error occurred: {:?}", e);
     }
 
