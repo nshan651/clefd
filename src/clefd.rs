@@ -1,12 +1,13 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context, Error, Result};
 use input::{event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait}, Libinput, LibinputInterface};
 use signal_hook::{consts::{SIGINT, SIGTERM}, iterator::Signals};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::fs::OpenOptions;
 use std::os::unix::{fs::OpenOptionsExt, io::OwnedFd};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::fs;
 use xkbcommon::xkb;
 use xkbcommon::xkb::{keysyms, Keysym, Keycode};
 
@@ -43,7 +44,6 @@ impl ChordState {
     /// Creates a new, empty ChordState.
     fn new() -> Self {
         Self {
-            // Pre-allocate capacity for a reasonable number of keys.
             pressed_keys: HashSet::with_capacity(MAX_PRESSED_KEYS),
         }
     }
@@ -96,7 +96,7 @@ impl ChordState {
 
         // Combine the sorted modifiers and the single key name.
         let mut chord_parts = modifier_names;
-        chord_parts.extend(key_names); // Add the single key name
+        chord_parts.extend(key_names);
         let chord_str = chord_parts.join(" ");
 
         // Write the chord string.
@@ -125,8 +125,8 @@ fn is_modifier_keysym(keysym: Keysym) -> bool {
 /// It takes the current XKB state and the keyboard event from libinput.
 ///
 /// # Arguments
-/// * `state` - A mutable reference to the XKB state.
-/// * `event` - The keyboard event to process.
+/// - `state` - A mutable reference to the XKB state.
+/// - `event` - The keyboard event to process.
 fn keyboard_event_handler(state: &mut xkb::State,
 			  chord_state: &mut ChordState,
 			  event: &KeyboardEvent) {
@@ -145,7 +145,7 @@ fn keyboard_event_handler(state: &mut xkb::State,
         KeyState::Pressed => {
             // Add the key to the keycord state.
             chord_state.add_key(xkb_code);
-	    println!("PRESSES!");
+	    println!("PRESSED!");
 
             // Check if the pressed key is a non-modifier. If so, it's the
             // trigger for the chord.
@@ -171,8 +171,8 @@ fn keyboard_event_handler(state: &mut xkb::State,
 /// to listen for keyboard events.
 ///
 /// # Arguments
-/// * `state` - The XKB state object.
-/// * `keep_running` - An atomic boolean to control the event loop.
+/// - `state` - The XKB state object.
+/// - `keep_running` - An atomic boolean to control the event loop.
 fn run_event_loop(mut state: xkb::State,
 		  chord_state: &mut ChordState,
 		  keep_running: Arc<AtomicBool>) -> Result<()> {
@@ -204,6 +204,61 @@ fn run_event_loop(mut state: xkb::State,
     Ok(())
 }
 
+/// Returns a HashMap of keybindings and commands based on a user's config.
+///
+/// # Arguments
+/// - `content` - The content of a user-defined config file as a single str.
+fn parse_config_content<'a>(content: &'a str) -> Result<HashMap<&'a str, &'a str>,
+							Box<dyn std::error::Error>> {
+    content
+        .lines()
+        .enumerate()
+        .filter_map(|(line_num, line)| parse_line(line, line_num))
+        .collect()
+}
+
+fn parse_line(line: &str, line_num: usize) -> Option<Result<(&str, &str),
+							    Box<dyn std::error::Error>>>  {
+    let line = line.trim();
+
+    // Ignore whitespace and comments.
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+
+    // Split on first colon only.
+    let mut parts = line.splitn(2, ':');
+    let key: &str = parts.next()?.trim();
+    let value: &str = parts.next()?.trim();
+
+    // Validate that both the key press and command exist.
+    if key.is_empty() || value.is_empty() {
+        return Some(Err(format!(
+            "Invalid key-value pair on line {}: '{}'",
+            line_num + 1,
+            line
+        ).into()));
+    }
+
+    Some(Ok((key, value)))
+}
+
+fn main() -> Result<()> {
+    let filename = "/home/nick/git/clef/clef.conf";
+
+    let content = fs::read_to_string(filename)?;
+
+    let keybindings = parse_config_content(&content).unwrap();
+
+    // Print the parsed HashMap for verification
+    for (key, value) in &keybindings {
+        println!("Key: \"{}\", Command: \"{}\"", key, value);
+    }
+
+    Ok(())
+}
+
+/*
 /// Main entry point for the application.
 fn main() -> Result<()> {
     // Set up an atomic boolean to control the main loop.
@@ -257,3 +312,4 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+*/
