@@ -2,10 +2,10 @@
 
 A universal keybindings manager.
 
-* Usage
+** Usage
 =clef= is a universal keybindings daemon that reacts to input events by executing commands. It reads in a configuration file located at ~$XDG_CONFIG_HOME/clef/clefrc~ by default. Here the user can define a series of bindings that correspond to different commands.
 
-** Example Configuration
+*** Example Configuration
 
 #+begin_example
 # Launch a browser.
@@ -18,7 +18,7 @@ Print : flameshot gui
 Super_L + Shift_L + Return : tmux
 #+end_example
 
-* Installation
+** Installation
 #+begin_src sh
   git clone https://github.com/nshan651/clef.git
   cd clef
