@@ -19,9 +19,25 @@ Super_L + Shift_L + Return : tmux
 #+end_example
 
 ** Installation
+*** Building From Source
 #+begin_src sh
   git clone https://github.com/nshan651/clef.git
   cd clef
   sudo make install
 #+end_src
 
+Additionally, you will require =libinput=, =libudev=, and =libxkbcommon= as runtime dependencies.
+
+#+begin_src sh
+  # Debian
+  sudo apt install libinput10 libudev1 libxkbcommon0
+
+  # Arch
+  sudo pacman -S libinput systemd-libs libxkbcommon
+#+end_src
+
+Alternatively, you can use the ~guix.scm~ manifest file to create an interactive shell.
+
+#+begin_src sh
+  guix shell -m guix.scm
+#+end_src
