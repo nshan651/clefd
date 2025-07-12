@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Error, Result};
+use anyhow::{anyhow, Context, Result};
 use input::{event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait}, Libinput, LibinputInterface};
 use signal_hook::{consts::{SIGINT, SIGTERM}, iterator::Signals};
 use std::collections::{HashSet, HashMap};
@@ -11,6 +11,7 @@ use std::fs;
 use std::process::Command;
 use xkbcommon::xkb;
 use xkbcommon::xkb::{keysyms, Keysym, Keycode};
+use dirs;
 
 const MAX_PRESSED_KEYS: usize = 16;
 
@@ -32,27 +33,27 @@ impl LibinputInterface for Interface {
 
     /// Closes a device file represented by the OwnedFd.
     fn close_restricted(&mut self, _fd: OwnedFd) {
-        // OwnedFd automatically closes when dropped - no unsafe code needed.
+        // OwnedFd automatically closes when dropped.
     }
 }
 
-struct UserConfig<'a> {
-    keybindings: HashMap<&'a str, &'a str>,
+struct UserConfig {
+    keybindings: HashMap<String, String>,
 }
 
-impl<'a> UserConfig<'a> {
+impl UserConfig {
     /// Creates an empty UserConfig.
-    fn from_str(content: &'a str) -> Result<Self, Box<dyn std::error::Error>> {
+    fn from_str(content: &str) -> Result<Self, Box<dyn std::error::Error>> {
 	let keybindings = content
             .lines()
             .enumerate()
             .filter_map(|(line_num, line)| Self::parse_line(line, line_num))
-            .collect::<Result<HashMap<&'a str, &'a str>, Box<dyn std::error::Error>>>()?;
+            .collect::<Result<HashMap<String, String>, Box<dyn std::error::Error>>>()?;
 
 	Ok(UserConfig { keybindings })
     }
 
-    fn parse_line(line: &str, line_num: usize) -> Option<Result<(&str, &str),
+    fn parse_line(line: &str, line_num: usize) -> Option<Result<(String, String),
 							    Box<dyn std::error::Error>>>  {
 	let line = line.trim();
 
@@ -63,8 +64,16 @@ impl<'a> UserConfig<'a> {
 
 	// Split on first colon only.
 	let mut parts = line.splitn(2, ':');
-	let key: &str = parts.next()?.trim();
-	let value: &str = parts.next()?.trim();
+
+	// Remove intermediate whitespace and '+' chars.
+	let key: String = parts.next()?
+	    .trim()
+	    .replace(char::is_whitespace, "")
+	    .replace('+', " ");
+
+	let value: String = parts.next()?
+	    .trim()
+	    .to_string();
 
 	// Validate that both the key press and command exist.
 	if key.is_empty() || value.is_empty() {
@@ -170,13 +179,13 @@ impl ChordState {
 
 /// Define a KeyboardClient, which includes the user's config data and a global
 /// chord state.
-struct KeyboardClient<'a> {
-    user_config: UserConfig<'a>,
+struct KeyboardClient {
+    user_config: UserConfig,
     chord_state: ChordState,
 }
 
-impl<'a> KeyboardClient<'a> {
-    fn new(user_config: UserConfig<'a>, chord_state: ChordState) -> Self {
+impl KeyboardClient {
+    fn new(user_config: UserConfig, chord_state: ChordState) -> Self {
 	Self {
 	    user_config,
 	    chord_state,
@@ -239,9 +248,8 @@ impl<'a> KeyboardClient<'a> {
     /// # Arguments
     /// - `state` - The XKB state object.
     /// - `keep_running` - An atomic boolean to control the event loop.
-    fn run_event_loop(&mut self,
+    fn keyboard_event_listener(&mut self,
 		      mut state: xkb::State,
-		      // chord_state: &mut ChordState,
 		      keep_running: Arc<AtomicBool>) -> Result<()> {
 	// Create a libinput context with a udev backend.
 	// This allows libinput to discover and manage input devices automatically.
@@ -285,7 +293,7 @@ impl<'a> KeyboardClient<'a> {
 	let mut command = Command::new(program);
 	command.args(args);
 
-	println!("Attempting to execute: '{}' with args: {:?}", program, args);
+	println!("Attempting to execute '{}' with args: {:?}", program, args);
 
 	let mut child = command.spawn()
             .context(format!(
@@ -308,23 +316,6 @@ impl<'a> KeyboardClient<'a> {
 	}
     }
 }
-
-// fn main() -> Result<(), Box<dyn std::error::Error>> {
-
-//     let filename = "/home/nick/git/clef/clef.conf";
-//     let content = fs::read_to_string(filename)?;
-//     let user_config = UserConfig::from_str(&content)?;
-//     let chord_state = ChordState::new();
-
-//     let client = KeyboardClient::new(
-// 	user_config,
-// 	chord_state);
-
-//     // client.exec_action("F5")
-//     // 	.unwrap_or_else(|e| eprintln!("Error handling keypress: {:?}", e));
-
-//     Ok(())
-// }
 
 /// Main entry point for the application.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -355,10 +346,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a keymap from the system's current keyboard configuration.
     let keymap = xkb::Keymap::new_from_names(
         &context,
-        "", // rules
-        "", // model
-        "", // layout
-        "", // variant
+        "",   // rules
+        "",   // model
+        "",   // layout
+        "",   // variant
         None, // options
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     ).ok_or_else(|| anyhow!("Failed to create XKB keymap"))?;
@@ -366,21 +357,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create an XKB state object from the keymap.
     let xkb_state = xkb::State::new(&keymap);
 
-    // Run the main event loop.
-    // Create the state manager for our chord logic.
-    let mut chord_state = ChordState::new();
+    // Parse config from XDG_CONFIG.
+    let config_dir = dirs::config_dir()
+        .ok_or_else(|| anyhow!("Could not determine user config directory"))?;
+    let config_path = config_dir.join("clef").join("clefrc");
+    let content = fs::read_to_string(config_path)?;
 
-    let filename = "/home/nick/git/clef/clef.conf";
-    let content = fs::read_to_string(filename)?;
     let user_config = UserConfig::from_str(&content)?;
     let chord_state = ChordState::new();
-
     let mut kb_client = KeyboardClient::new(
 	user_config,
 	chord_state);
     
     // Run the main event loop.
-    if let Err(e) = kb_client.run_event_loop(xkb_state, keep_running) {
+    if let Err(e) = kb_client.keyboard_event_listener(xkb_state, keep_running) {
         eprintln!("An error occurred: {:?}", e);
     }
 

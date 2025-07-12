@@ -24,6 +24,8 @@ tokio = { version = "1", features = ["full"] }
 # Error handling.
 anyhow = "1.0.75"
 
+dirs = "6.0.0"
+
 [[bin]]
 name = "clefd"
 path = "src/clefd.rs"
