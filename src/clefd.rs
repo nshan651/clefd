@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::fs;
+use std::process::Command;
 use xkbcommon::xkb;
 use xkbcommon::xkb::{keysyms, Keysym, Keycode};
 
@@ -97,10 +98,10 @@ impl ChordState {
         // Combine the sorted modifiers and the single key name.
         let mut chord_parts = modifier_names;
         chord_parts.extend(key_names);
-        let chord_str = chord_parts.join(" ");
+        let keychord = chord_parts.join(" ");
 
         // Write the chord string.
-        println!("Dispatching chord: {}", chord_str);
+        println!("Dispatching chord: {}", keychord);
     }
 }
 
@@ -204,19 +205,6 @@ fn run_event_loop(mut state: xkb::State,
     Ok(())
 }
 
-/// Returns a HashMap of keybindings and commands based on a user's config.
-///
-/// # Arguments
-/// - `content` - The content of a user-defined config file as a single str.
-fn parse_config_content<'a>(content: &'a str) -> Result<HashMap<&'a str, &'a str>,
-							Box<dyn std::error::Error>> {
-    content
-        .lines()
-        .enumerate()
-        .filter_map(|(line_num, line)| parse_line(line, line_num))
-        .collect()
-}
-
 fn parse_line(line: &str, line_num: usize) -> Option<Result<(&str, &str),
 							    Box<dyn std::error::Error>>>  {
     let line = line.trim();
@@ -243,17 +231,63 @@ fn parse_line(line: &str, line_num: usize) -> Option<Result<(&str, &str),
     Some(Ok((key, value)))
 }
 
-fn main() -> Result<()> {
+/// Returns a HashMap of keybindings and commands based on a user's config.
+///
+/// # Arguments
+/// - `content` - The content of a user-defined config file as a single str.
+fn parse_config_content<'a>(content: &'a str) -> Result<HashMap<&'a str, &'a str>,
+							Box<dyn std::error::Error>> {
+    content
+        .lines()
+        .enumerate()
+        .filter_map(|(line_num, line)| parse_line(line, line_num))
+        .collect()
+}
+
+/// Handle a single keypress.
+fn handle_keychord(keychord: &str, keybindings: &HashMap<&str, &str>) -> Result<()> {
+    let raw_command = keybindings.get(keychord)
+	.ok_or_else(|| anyhow!("keychord '{}' not found in keybindings.", keychord))?;
+
+    // Split on whitespace.
+    let parts: Vec<&str> = raw_command.split_whitespace().collect();
+    let program = &parts[0];
+    let args = &parts[1..];
+
+    let mut command = Command::new(program);
+    command.args(args);
+
+    println!("Attempting to execute: '{}' with args: {:?}", program, args);
+
+    let mut child = command.spawn()
+        .context(format!(
+	    "Failed to spawn command '{}' (executable: '{}').",
+	    raw_command,
+	    program))?;
+
+    let status = child.wait()
+        .context(format!(
+	    "Failed to wait for command '{}' to complete.",
+	    raw_command))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Command '{}' exited with non-zero status: {:?}",
+            raw_command, status
+        ))
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+
     let filename = "/home/nick/git/clef/clef.conf";
-
     let content = fs::read_to_string(filename)?;
-
     let keybindings = parse_config_content(&content).unwrap();
 
-    // Print the parsed HashMap for verification
-    for (key, value) in &keybindings {
-        println!("Key: \"{}\", Command: \"{}\"", key, value);
-    }
+    handle_keychord("F5", &keybindings)
+	.unwrap_or_else(|e| eprintln!("Error handling keypress: {:?}", e));
 
     Ok(())
 }
