@@ -2,36 +2,26 @@
 
 A universal keybindings manager.
 
-* wlroots-based hotkey daemon
+* Usage
+=clef= is a universal keybindings daemon that reacts to input events by executing commands. It reads in a configuration file located at ~$XDG_CONFIG_HOME/clef/clefrc~ by default. Here the user can define a series of bindings that correspond to different commands.
 
-* Notes
-There are a few considerations for how X11 and Wayland handle keyboard inputs:
-** X11
-- Uses a centralized server that manages input and drawing
-- Allow sapps to request a "grab" of the keyboard ~XGrabKeyboard~
-- Low-level APIs typically involve Xli or XCB libraries
-** Wayland
-- Designed with security and isolation in mind. There is no central X server; the compositor is responsible for managing displays and input.
-- Does not allow arbitrary applications to capture all keyboard input globally for security reasons. Global shortcuts are typically managed by the Wayland compositor itself (e.g., GNOME Shell, KDE Plasma, Sway).
-- Applications receive keyboard events only when their windows are focused.
-- To implement system-wide keybindings, your program would either need to:
-    - Be part of the compositor.
-    - Use specific protocols or D-Bus interfaces provided by the compositor for registering global shortcuts (these are not standardized across all compositors).
-    - Operate at a lower level, beneath the display server, by directly processing kernel input events.
-** Low-Level APIs and Approaches for Key Presses
-- =evdev= (Kernel Event Devices)
-  - Exposed raw input events through event devices (found in =/dev/input/=)
-  - This does work independently of X or Wayland, but requires root and/or adding a user to the =input= group, which has security implications
-  - Also requires converting raw scancode events into keysyms, which requires =libxkbcommon=
+** Example Configuration
 
-* Implementation & Structure
-** Configuration
-Allow users to define key combos in a config file. Parse values from the config
-** Event Reading Backend
-This module will handle the low-level interaction by using Guile's FFI for =libinput=
-** Key Event Processing
-This module will take raw events and use =libxkbcommon= (via FFI) to translate keycodes into keysyms.
-** Action Execution
-Once a configured key combo is detected, this module will execute the corresponding action (e.g. run a shell command, send a D-Bus message, execute a scheme function)
-** Event Loop
-A loop that continuously reads and processes input
+#+begin_example
+# Launch a browser.
+Super_L + w : firefox
+
+# Take a screenshot.
+Print : flameshot gui
+
+# Launch tmux session.
+Super_L + Shift_L + Return : tmux
+#+end_example
+
+* Installation
+#+begin_src sh
+  git clone https://github.com/nshan651/clef.git
+  cd clef
+  sudo make install
+#+end_src
+
