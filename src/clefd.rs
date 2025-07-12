@@ -43,18 +43,17 @@ struct UserConfig {
 
 impl UserConfig {
     /// Creates an empty UserConfig.
-    fn from_str(content: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    fn from_str(content: &str) -> Result<Self> {
 	let keybindings = content
             .lines()
             .enumerate()
             .filter_map(|(line_num, line)| Self::parse_line(line, line_num))
-            .collect::<Result<HashMap<String, String>, Box<dyn std::error::Error>>>()?;
+            .collect::<Result<HashMap<String, String>>>()?;
 
 	Ok(UserConfig { keybindings })
     }
 
-    fn parse_line(line: &str, line_num: usize) -> Option<Result<(String, String),
-							    Box<dyn std::error::Error>>>  {
+    fn parse_line(line: &str, line_num: usize) -> Option<Result<(String, String)>> {
 	let line = line.trim();
 
 	// Ignore whitespace and comments.
@@ -75,13 +74,12 @@ impl UserConfig {
 	    .trim()
 	    .to_string();
 
-	// Validate that both the key press and command exist.
+
 	if key.is_empty() || value.is_empty() {
-            return Some(Err(format!(
+            return Some(Err(anyhow!(
 		"Invalid key-value pair on line {}: '{}'",
 		line_num + 1,
-		line
-            ).into()));
+		line)));
 	}
 
 	Some(Ok((key, value)))
@@ -318,7 +316,7 @@ impl KeyboardClient {
 }
 
 /// Main entry point for the application.
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     // Set up an atomic boolean to control the main loop.
     // This allows us to gracefully shut down from a signal handler.
     let keep_running = Arc::new(AtomicBool::new(true));
