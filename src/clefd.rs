@@ -36,6 +36,49 @@ impl LibinputInterface for Interface {
     }
 }
 
+struct UserConfig<'a> {
+    keybindings: HashMap<&'a str, &'a str>,
+}
+
+impl<'a> UserConfig<'a> {
+    /// Creates an empty UserConfig.
+    fn from_str(content: &'a str) -> Result<Self, Box<dyn std::error::Error>> {
+	let keybindings = content
+            .lines()
+            .enumerate()
+            .filter_map(|(line_num, line)| Self::parse_line(line, line_num))
+            .collect::<Result<HashMap<&'a str, &'a str>, Box<dyn std::error::Error>>>()?;
+
+	Ok(UserConfig { keybindings })
+    }
+
+    fn parse_line(line: &str, line_num: usize) -> Option<Result<(&str, &str),
+							    Box<dyn std::error::Error>>>  {
+	let line = line.trim();
+
+	// Ignore whitespace and comments.
+	if line.is_empty() || line.starts_with('#') {
+            return None;
+	}
+
+	// Split on first colon only.
+	let mut parts = line.splitn(2, ':');
+	let key: &str = parts.next()?.trim();
+	let value: &str = parts.next()?.trim();
+
+	// Validate that both the key press and command exist.
+	if key.is_empty() || value.is_empty() {
+            return Some(Err(format!(
+		"Invalid key-value pair on line {}: '{}'",
+		line_num + 1,
+		line
+            ).into()));
+	}
+
+	Some(Ok((key, value)))
+    }
+}
+
 /// Manages the state of currently pressed keys for chord detection.
 struct ChordState {
     pressed_keys: HashSet<xkb::Keycode>,
@@ -71,7 +114,7 @@ impl ChordState {
     /// A valid chord consists of one or more modifiers and EXACTLY ONE non-modifier
     /// key. The resulting string is canonical: modifiers are sorted alphabetically,
     /// followed by the single non-modifier key, all space-separated.
-    fn send_chord_event(&self, xkb_state: &xkb::State) {
+    fn get_keychord(&self, xkb_state: &xkb::State) -> Result<String> {
         let mut modifier_names = Vec::new();
         let mut key_names = Vec::new();
 
@@ -80,16 +123,19 @@ impl ChordState {
             let keysym = xkb_state.key_get_one_sym(keycode);
             let name = xkb::keysym_get_name(keysym);
 
-            if is_modifier_keysym(keysym) {
+            if Self::is_modifier_keysym(keysym) {
                 modifier_names.push(name);
             } else {
                 key_names.push(name);
             }
         }
 
-        // A valid chord trigger has exactly one non-modifier key.
+	// A valid chord trigger has exactly one non-modifier key.
         if key_names.len() != 1 {
-            return;
+            return Err(anyhow!(
+                "Invalid chord: expected exactly one non-modifier key, got {}.",
+                key_names.len()
+            ));
         }
 
         // Sort modifiers alphabetically for a canonical representation.
@@ -102,199 +148,186 @@ impl ChordState {
 
         // Write the chord string.
         println!("Dispatching chord: {}", keychord);
+
+	Ok(keychord)
+    }
+
+    /// Checks if a given keysym is a modifier key.
+    fn is_modifier_keysym(keysym: Keysym) -> bool {
+	matches!(keysym.into(),
+		 keysyms::KEY_Shift_L | keysyms::KEY_Shift_R |
+		 keysyms::KEY_Control_L | keysyms::KEY_Control_R |
+		 keysyms::KEY_Alt_L | keysyms::KEY_Alt_R |
+		 keysyms::KEY_Meta_L | keysyms::KEY_Meta_R |
+		 keysyms::KEY_Super_L | keysyms::KEY_Super_R |
+		 keysyms::KEY_Hyper_L | keysyms::KEY_Hyper_R |
+		 keysyms::KEY_Scroll_Lock |
+		 keysyms::KEY_Caps_Lock |
+		 keysyms::KEY_Shift_Lock
+	)
     }
 }
 
-/// Checks if a given keysym is a modifier key.
-fn is_modifier_keysym(keysym: Keysym) -> bool {
-    matches!(keysym.into(),
-        keysyms::KEY_Shift_L | keysyms::KEY_Shift_R |
-        keysyms::KEY_Control_L | keysyms::KEY_Control_R |
-        keysyms::KEY_Alt_L | keysyms::KEY_Alt_R |
-        keysyms::KEY_Meta_L | keysyms::KEY_Meta_R |
-        keysyms::KEY_Super_L | keysyms::KEY_Super_R |
-        keysyms::KEY_Hyper_L | keysyms::KEY_Hyper_R |
-        keysyms::KEY_Scroll_Lock |
-        keysyms::KEY_Caps_Lock |
-        keysyms::KEY_Shift_Lock
-    )
+/// Define a KeyboardClient, which includes the user's config data and a global
+/// chord state.
+struct KeyboardClient<'a> {
+    user_config: UserConfig<'a>,
+    chord_state: ChordState,
 }
 
-/// Handles a single keyboard event.
-///
-/// This function is a placeholder for your actual chord processing logic.
-/// It takes the current XKB state and the keyboard event from libinput.
-///
-/// # Arguments
-/// - `state` - A mutable reference to the XKB state.
-/// - `event` - The keyboard event to process.
-fn keyboard_event_handler(state: &mut xkb::State,
-			  chord_state: &mut ChordState,
-			  event: &KeyboardEvent) {
+impl<'a> KeyboardClient<'a> {
+    fn new(user_config: UserConfig<'a>, chord_state: ChordState) -> Self {
+	Self {
+	    user_config,
+	    chord_state,
+	}
+    }
+    /// Handles a single keyboard event.
+    ///
+    /// This function is a placeholder for your actual chord processing logic.
+    /// It takes the current XKB state and the keyboard event from libinput.
+    ///
+    /// # Arguments
+    /// - `state` - A mutable reference to the XKB state.
+    /// - `event` - The keyboard event to process.
+    fn keyboard_event_handler(&mut self,
+			      state: &mut xkb::State,
+			      event: &KeyboardEvent) -> Result<()> {
 
-    // Note: The keycode from libinput needs a +8 offset to match XKB keycodes.
-    let xkb_code: Keycode = (event.key() + 8).into();
-    let key_state: KeyState = event.key_state();
+	// Note: The keycode from libinput needs a +8 offset to match XKB keycodes.
+	let xkb_code: Keycode = (event.key() + 8).into();
+	let key_state: KeyState = event.key_state();
 
-    println!(
-        "Key Event: code={}, state={:?}",
-        xkb_code.raw(),
-        key_state,
-    );
+	println!(
+            "Key Event: code={}, state={:?}",
+            xkb_code.raw(),
+            key_state,
+	);
 
-    match key_state {
-        KeyState::Pressed => {
-            // Add the key to the keycord state.
-            chord_state.add_key(xkb_code);
-	    println!("PRESSED!");
+	match key_state {
+            KeyState::Pressed => {
+		// Add the key to the keycord state.
+		self.chord_state.add_key(xkb_code);
+		println!("PRESSED!");
 
-            // Check if the pressed key is a non-modifier. If so, it's the
-            // trigger for the chord.
-            let keysym = state.key_get_one_sym(xkb_code);
-            let key_name = xkb::keysym_get_name(keysym);
-            println!("  -> Keysym: {} ({})", key_name, keysym.raw());
+		// Check if the pressed key is a non-modifier. If so, it's the
+		// trigger for the chord.
+		let keysym = state.key_get_one_sym(xkb_code);
+		let key_name = xkb::keysym_get_name(keysym);
+		println!("  -> Keysym: {} ({})", key_name, keysym.raw());
 
-            if !is_modifier_keysym(keysym) {
-                chord_state.send_chord_event(state);
+		if !ChordState::is_modifier_keysym(keysym) {
+                    let keychord = self.chord_state.get_keychord(state)?;
+		    self.exec_action(&keychord)?;
+		}
             }
-        }
-        KeyState::Released => {
-            // Remove the key from our state.
-            chord_state.remove_key(xkb_code);
-	    println!("RELEASED!");
-        }
-    }
-}
-
-/// Main event loop to read key events and process chords.
-///
-/// This function sets up libinput with a udev backend and enters a loop
-/// to listen for keyboard events.
-///
-/// # Arguments
-/// - `state` - The XKB state object.
-/// - `keep_running` - An atomic boolean to control the event loop.
-fn run_event_loop(mut state: xkb::State,
-		  chord_state: &mut ChordState,
-		  keep_running: Arc<AtomicBool>) -> Result<()> {
-    // Create a libinput context with a udev backend.
-    // This allows libinput to discover and manage input devices automatically.
-    let mut libinput = Libinput::new_with_udev(Interface);
-
-    // Assign the default seat "seat0" to the context. A "seat" represents
-    // a collection of input devices used by a single user.
-    libinput.udev_assign_seat("seat0")
-        .map_err(|_| anyhow!("Failed to assign seat 'seat0'"))?;
-
-    println!("Event loop started. Waiting for keyboard input...");
-
-    // Process incoming libinput events.
-    while keep_running.load(Ordering::SeqCst) {
-        // Dispatch events from libinput.
-        libinput.dispatch().context("Failed to dispatch libinput events")?;
-
-        // Iterate over all available events from libinput.
-        for event in &mut libinput {
-            // We only care about keyboard events.
-            if let input::Event::Keyboard(kb_event) = event {
-                keyboard_event_handler(&mut state, chord_state, &kb_event);
+            KeyState::Released => {
+		// Remove the key from our state.
+		self.chord_state.remove_key(xkb_code);
+		println!("RELEASED!");
             }
-        }
+	}
+
+	Ok(())
     }
 
-    Ok(())
-}
+    /// Main event loop to read key events and process chords.
+    ///
+    /// This function sets up libinput with a udev backend and enters a loop
+    /// to listen for keyboard events.
+    ///
+    /// # Arguments
+    /// - `state` - The XKB state object.
+    /// - `keep_running` - An atomic boolean to control the event loop.
+    fn run_event_loop(&mut self,
+		      mut state: xkb::State,
+		      // chord_state: &mut ChordState,
+		      keep_running: Arc<AtomicBool>) -> Result<()> {
+	// Create a libinput context with a udev backend.
+	// This allows libinput to discover and manage input devices automatically.
+	let mut libinput = Libinput::new_with_udev(Interface);
 
-fn parse_line(line: &str, line_num: usize) -> Option<Result<(&str, &str),
-							    Box<dyn std::error::Error>>>  {
-    let line = line.trim();
+	// Assign the default seat "seat0" to the context. A "seat" represents
+	// a collection of input devices used by a single user.
+	libinput.udev_assign_seat("seat0")
+            .map_err(|_| anyhow!("Failed to assign seat 'seat0'"))?;
 
-    // Ignore whitespace and comments.
-    if line.is_empty() || line.starts_with('#') {
-        return None;
+	println!("Event loop started. Waiting for keyboard input...");
+
+	// Process incoming libinput events.
+	while keep_running.load(Ordering::SeqCst) {
+            // Dispatch events from libinput.
+            libinput.dispatch().context("Failed to dispatch libinput events")?;
+
+            // Iterate over all available events from libinput.
+            for event in &mut libinput {
+		// We only care about keyboard events.
+		if let input::Event::Keyboard(kb_event) = event {
+                    self.keyboard_event_handler(&mut state, &kb_event)
+			.unwrap_or_else(|e| eprintln!("Failed to handle event: {}", e));
+		}
+            }
+	}
+
+	Ok(())
     }
 
-    // Split on first colon only.
-    let mut parts = line.splitn(2, ':');
-    let key: &str = parts.next()?.trim();
-    let value: &str = parts.next()?.trim();
+    /// Execute an action based on the key press.
+    fn exec_action(&self, keychord: &str) -> Result<()> {
+	let raw_command = self.user_config.keybindings.get(keychord)
+	    .ok_or_else(|| anyhow!("keychord '{}' not found in keybindings.", keychord))?;
 
-    // Validate that both the key press and command exist.
-    if key.is_empty() || value.is_empty() {
-        return Some(Err(format!(
-            "Invalid key-value pair on line {}: '{}'",
-            line_num + 1,
-            line
-        ).into()));
-    }
+	// Split on whitespace.
+	let parts: Vec<&str> = raw_command.split_whitespace().collect();
+	let program = &parts[0];
+	let args = &parts[1..];
 
-    Some(Ok((key, value)))
-}
+	let mut command = Command::new(program);
+	command.args(args);
 
-/// Returns a HashMap of keybindings and commands based on a user's config.
-///
-/// # Arguments
-/// - `content` - The content of a user-defined config file as a single str.
-fn parse_config_content<'a>(content: &'a str) -> Result<HashMap<&'a str, &'a str>,
-							Box<dyn std::error::Error>> {
-    content
-        .lines()
-        .enumerate()
-        .filter_map(|(line_num, line)| parse_line(line, line_num))
-        .collect()
-}
+	println!("Attempting to execute: '{}' with args: {:?}", program, args);
 
-/// Handle a single keypress.
-fn handle_keychord(keychord: &str, keybindings: &HashMap<&str, &str>) -> Result<()> {
-    let raw_command = keybindings.get(keychord)
-	.ok_or_else(|| anyhow!("keychord '{}' not found in keybindings.", keychord))?;
+	let mut child = command.spawn()
+            .context(format!(
+		"Failed to spawn command '{}' (executable: '{}').",
+		raw_command,
+		program))?;
 
-    // Split on whitespace.
-    let parts: Vec<&str> = raw_command.split_whitespace().collect();
-    let program = &parts[0];
-    let args = &parts[1..];
+	let status = child.wait()
+            .context(format!(
+		"Failed to wait for command '{}' to complete.",
+		raw_command))?;
 
-    let mut command = Command::new(program);
-    command.args(args);
-
-    println!("Attempting to execute: '{}' with args: {:?}", program, args);
-
-    let mut child = command.spawn()
-        .context(format!(
-	    "Failed to spawn command '{}' (executable: '{}').",
-	    raw_command,
-	    program))?;
-
-    let status = child.wait()
-        .context(format!(
-	    "Failed to wait for command '{}' to complete.",
-	    raw_command))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "Command '{}' exited with non-zero status: {:?}",
-            raw_command, status
-        ))
+	if status.success() {
+            Ok(())
+	} else {
+            Err(anyhow!(
+		"Command '{}' exited with non-zero status: {:?}",
+		raw_command, status
+            ))
+	}
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+// fn main() -> Result<(), Box<dyn std::error::Error>> {
 
-    let filename = "/home/nick/git/clef/clef.conf";
-    let content = fs::read_to_string(filename)?;
-    let keybindings = parse_config_content(&content).unwrap();
+//     let filename = "/home/nick/git/clef/clef.conf";
+//     let content = fs::read_to_string(filename)?;
+//     let user_config = UserConfig::from_str(&content)?;
+//     let chord_state = ChordState::new();
 
-    handle_keychord("F5", &keybindings)
-	.unwrap_or_else(|e| eprintln!("Error handling keypress: {:?}", e));
+//     let client = KeyboardClient::new(
+// 	user_config,
+// 	chord_state);
 
-    Ok(())
-}
+//     // client.exec_action("F5")
+//     // 	.unwrap_or_else(|e| eprintln!("Error handling keypress: {:?}", e));
 
-/*
+//     Ok(())
+// }
+
 /// Main entry point for the application.
-fn main() -> Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set up an atomic boolean to control the main loop.
     // This allows us to gracefully shut down from a signal handler.
     let keep_running = Arc::new(AtomicBool::new(true));
@@ -336,9 +369,18 @@ fn main() -> Result<()> {
     // Run the main event loop.
     // Create the state manager for our chord logic.
     let mut chord_state = ChordState::new();
+
+    let filename = "/home/nick/git/clef/clef.conf";
+    let content = fs::read_to_string(filename)?;
+    let user_config = UserConfig::from_str(&content)?;
+    let chord_state = ChordState::new();
+
+    let mut kb_client = KeyboardClient::new(
+	user_config,
+	chord_state);
     
     // Run the main event loop.
-    if let Err(e) = run_event_loop(xkb_state, &mut chord_state, keep_running) {
+    if let Err(e) = kb_client.run_event_loop(xkb_state, keep_running) {
         eprintln!("An error occurred: {:?}", e);
     }
 
@@ -346,4 +388,3 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-*/
