@@ -26,6 +26,8 @@ Super_L + Shift_L + Return : tmux
   sudo make install
 #+end_src
 
+If you are using systemd, start the service with ~systemctl --user enable --now clefd.service~
+
 Additionally, you will require =libinput=, =libudev=, and =libxkbcommon= as runtime dependencies.
 
 #+begin_src sh
@@ -35,6 +37,7 @@ Additionally, you will require =libinput=, =libudev=, and =libxkbcommon= as runt
   # Arch
   sudo pacman -S libinput systemd-libs libxkbcommon
 #+end_src
+
 
 Alternatively, you can use the ~guix.scm~ manifest file to create an interactive shell.
 

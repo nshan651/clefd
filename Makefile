@@ -1,29 +1,21 @@
 PROG := clefd
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
-SYSTEMD_UNIT_DIR ?= /etc/systemd/system
+SYSTEMD_UNIT_DIR ?= $(HOME)/.config/systemd/user
 
 all:
 	cargo build --release
 
 clean:
-	rm -f ./bin/$(PROG)
+	rm -rf ./target
 
-install: all
-	install -Dm755 ./bin/$(PROG) $(BINDIR)/$(PROG)
-	#install -Dm644 dist/systemd/$(PROG).service $(SYSTEMD_UNIT_DIR)/$(PROG).service
-
-	#-systemctl enable $(PROG).service
-	#-systemctl start $(PROG).service
-
-	#systemctl daemon-reload
-
+install:
+	sudo install -Dm755 ./target/release/$(PROG) $(BINDIR)/$(PROG)
+	install -Dm644 dist/systemd/$(PROG).service $(SYSTEMD_UNIT_DIR)/$(PROG).service
+	systemctl --user enable --now $(PROG).service
 
 uninstall:
-	#systemctl stop $(PROG).service
-	#systemctl disable $(PROG).service
-
-	#systemctl daemon-reload
+	systemctl --user disable --now $(PROG).service
 	rm -f $(BINDIR)/$(PROG) \
 		$(SYSTEMD_UNIT_DIR)/$(PROG).service
 

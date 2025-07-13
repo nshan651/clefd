@@ -1,39 +1,9 @@
 [Unit]
-Description=Clef Chord Daemon
-
-# Clef needs access to /dev/input devices, which are managed by udev.
-After=network.target graphical.target systemd-logind.service
+Description=clefd hotkey daemon
 
 [Service]
-Type=simple
 ExecStart=/usr/local/bin/clefd
-
-# Restart the service if it exits with a non-zero status, or crashes.
 Restart=on-failure
-RestartSec=5s
 
-# Running as root is often required for direct /dev/input access.
-# TODO: configure udev rules to grant permissions to a less privileged user/group
-# (e.g., 'input' group).
-User=root
-
-# Prevents the service from modifying most of the file system.
-ProtectSystem=full
-
-# Prevents the service from accessing user home directories.
-ProtectHome=true
-
-# Gives the service a private /tmp and /var/tmp directory, isolating it from other processes.
-PrivateTmp=true
-
-# Ensure the FIFO is removed when the service stops.
-ExecStopPost=/usr/bin/rm -f /tmp/clefd.fifo
-
-# Directs stdout/stderr to the systemd journal for easy logging with `journalctl`.
-StandardOutput=journal
-StandardError=journal
-
-# This means the service should be started when the system reaches the multi-user runlevel (normal boot).
-# To enable it, you would run `sudo systemctl enable clefd.service`.
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
