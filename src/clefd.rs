@@ -168,9 +168,7 @@ impl ChordState {
 		 keysyms::KEY_Meta_L | keysyms::KEY_Meta_R |
 		 keysyms::KEY_Super_L | keysyms::KEY_Super_R |
 		 keysyms::KEY_Hyper_L | keysyms::KEY_Hyper_R |
-		 keysyms::KEY_Scroll_Lock |
-		 keysyms::KEY_Caps_Lock |
-		 keysyms::KEY_Shift_Lock
+		 keysyms::KEY_Caps_Lock | keysyms::KEY_Shift_Lock
 	)
     }
 }

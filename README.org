@@ -18,6 +18,29 @@ Print : flameshot gui
 Super_L + Shift_L + Return : tmux
 #+end_example
 
+*** Modifiers
+=clef= allows you to chain multiple modifier keys together. It supports the following XKB modifiers:
+#+begin_example
+Shift_L                       /* Left shift */
+Shift_R                       /* Right shift */
+Control_L                     /* Left control */
+Control_R                     /* Right control */
+Caps_Lock                     /* Caps lock */
+Shift_Lock                    /* Shift lock */
+
+Meta_L                        /* Left meta */
+Meta_R                        /* Right meta */
+Alt_L                         /* Left alt */
+Alt_R                         /* Right alt */
+Super_L                       /* Left super */
+Super_R                       /* Right super */
+Hyper_L                       /* Left hyper */
+Hyper_R                       /* Right hyper */
+#+end_example
+
+*** Other Key Names
+For a comprehensive list of XKB key names, please refer to the [[https://xkbcommon.org/doc/current/xkbcommon-keysyms_8h.html][libxkbcommon docs]]. Note that you will need to omit the =XKB_KEY_= prefix when adding these to your user configuration, e.g. =XKB_KEY_Escape= becomes =Escape=.
+
 ** Installation
 *** Building From Source
 #+begin_src sh
