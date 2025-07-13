@@ -1,16 +1,11 @@
-(use-modules (guix packages)
-             (gnu packages admin)
-             (gnu packages linux)
-             (gnu packages commencement))
+;;; Use this guix manifest to create an isolated shell or custom development profile.
+;;; `guix shell -m guix.scm' or `guix package -m guix.scm'.
+(use-modules (guix packages))
 
 (specifications->manifest
- '(
-   "gcc-toolchain"
-   "make"
-   "git"
+ '("make"
+   "rust"
    "pkg-config"
    "libinput"
    "eudev"
-   "libxkbcommon"
-   "guile"
-   ))
+   "libxkbcommon"))
