@@ -197,33 +197,33 @@ impl KeyboardClient {
 			      state: &mut xkb::State,
 			      event: &KeyboardEvent) -> Result<()> {
 
-	// Note: The keycode from libinput needs a +8 offset to match XKB keycodes.
+	// The keycode from libinput needs a +8 offset to match XKB keycodes.
 	let xkb_code: Keycode = (event.key() + 8).into();
 	let key_state: KeyState = event.key_state();
-
-	debug!(
-            "Key Event: code={}, state={:?}",
-            xkb_code.raw(),
-            key_state,
-	);
+	let keysym = state.key_get_one_sym(xkb_code);
+	let key_name = xkb::keysym_get_name(keysym);
 
 	match key_state {
             KeyState::Pressed => {
-		// Add the key to the keycord state.
+		debug!("key event: {:?}, state={:?}, name={}",
+		       xkb_code,
+		       key_state,
+		       key_name,
+		);
 		self.chord_state.add_key(xkb_code);
 
-		// Check if the pressed key is a non-modifier. If so, it's the
-		// trigger for the chord.
-		let keysym = state.key_get_one_sym(xkb_code);
-		let key_name = xkb::keysym_get_name(keysym);
-
+		// A non-modifier signals the end of a key sequence.
 		if !ChordState::is_modifier_keysym(keysym) {
                     let keychord = self.chord_state.get_keychord(state)?;
 		    self.exec_action(&keychord)?;
 		}
             }
             KeyState::Released => {
-		// Remove the key from our state.
+		debug!("key event: {:?}, state={:?}, name={}",
+		       xkb_code,
+		       key_state,
+		       key_name,
+		);
 		self.chord_state.remove_key(xkb_code);
             }
 	}
