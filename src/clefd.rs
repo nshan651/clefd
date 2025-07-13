@@ -12,6 +12,8 @@ use std::process::Command;
 use xkbcommon::xkb;
 use xkbcommon::xkb::{keysyms, Keysym, Keycode};
 use dirs;
+use log::{info, debug};
+
 
 const MAX_PRESSED_KEYS: usize = 16;
 
@@ -107,13 +109,11 @@ impl ChordState {
             return;
         }
         self.pressed_keys.insert(keycode);
-        println!("  -> Current Keys: {:?}", self.pressed_keys);
     }
 
     /// Removes a keycode from the set of currently pressed keys.
     fn remove_key(&mut self, keycode: xkb::Keycode) {
         self.pressed_keys.remove(&keycode);
-        println!("  -> Current Keys: {:?}", self.pressed_keys);
     }
 
     /// Constructs a chord string and sends it if it's valid.
@@ -153,9 +153,6 @@ impl ChordState {
         chord_parts.extend(key_names);
         let keychord = chord_parts.join(" ");
 
-        // Write the chord string.
-        println!("Dispatching chord: {}", keychord);
-
 	Ok(keychord)
     }
 
@@ -187,6 +184,7 @@ impl KeyboardClient {
 	    chord_state,
 	}
     }
+
     /// Handles a single keyboard event.
     ///
     /// This function is a placeholder for your actual chord processing logic.
@@ -203,7 +201,7 @@ impl KeyboardClient {
 	let xkb_code: Keycode = (event.key() + 8).into();
 	let key_state: KeyState = event.key_state();
 
-	println!(
+	debug!(
             "Key Event: code={}, state={:?}",
             xkb_code.raw(),
             key_state,
@@ -213,13 +211,11 @@ impl KeyboardClient {
             KeyState::Pressed => {
 		// Add the key to the keycord state.
 		self.chord_state.add_key(xkb_code);
-		println!("PRESSED!");
 
 		// Check if the pressed key is a non-modifier. If so, it's the
 		// trigger for the chord.
 		let keysym = state.key_get_one_sym(xkb_code);
 		let key_name = xkb::keysym_get_name(keysym);
-		println!("  -> Keysym: {} ({})", key_name, keysym.raw());
 
 		if !ChordState::is_modifier_keysym(keysym) {
                     let keychord = self.chord_state.get_keychord(state)?;
@@ -229,7 +225,6 @@ impl KeyboardClient {
             KeyState::Released => {
 		// Remove the key from our state.
 		self.chord_state.remove_key(xkb_code);
-		println!("RELEASED!");
             }
 	}
 
@@ -256,7 +251,7 @@ impl KeyboardClient {
 	libinput.udev_assign_seat("seat0")
             .map_err(|_| anyhow!("Failed to assign seat 'seat0'"))?;
 
-	println!("Event loop started. Waiting for keyboard input...");
+	info!("Event loop started. Waiting for keyboard input...");
 
 	// Process incoming libinput events.
 	while keep_running.load(Ordering::SeqCst) {
@@ -278,8 +273,10 @@ impl KeyboardClient {
 
     /// Execute an action based on the key press.
     fn exec_action(&self, keychord: &str) -> Result<()> {
-	let raw_command = self.user_config.keybindings.get(keychord)
-	    .ok_or_else(|| anyhow!("keychord '{}' not found in keybindings.", keychord))?;
+	let raw_command = match self.user_config.keybindings.get(keychord) {
+	    Some(cmd) => cmd,
+	    None => return Ok(()),
+	};
 
 	// Split on whitespace.
 	let parts: Vec<&str> = raw_command.split_whitespace().collect();
@@ -289,7 +286,7 @@ impl KeyboardClient {
 	let mut command = Command::new(program);
 	command.args(args);
 
-	println!("Attempting to execute '{}' with args: {:?}", program, args);
+	debug!("Attempting to execute '{}' with args: {:?}", program, args);
 
 	let mut child = command.spawn()
             .context(format!(
@@ -315,26 +312,28 @@ impl KeyboardClient {
 
 /// Main entry point for the application.
 fn main() -> Result<()> {
+    // Init info logging.
+    env_logger::Builder::from_env(
+	env_logger::Env::default().default_filter_or("info")).init();
+
     // Set up an atomic boolean to control the main loop.
     // This allows us to gracefully shut down from a signal handler.
     let keep_running = Arc::new(AtomicBool::new(true));
     let keep_running_clone = keep_running.clone();
 
-    // Register a signal handler for SIGINT and SIGTERM.
-    // This ensures that the application can clean up and shut down gracefully
-    // when the user presses Ctrl+C or the system sends a termination signal.
+    // Register a signal handler for SIGINT and SIGTERM to ensure graceful shutdowns.
     let mut signals = Signals::new(&[SIGINT, SIGTERM])
         .context("Failed to register signal handlers")?;
 
     // Spawn a thread to listen for signals.
     std::thread::spawn(move || {
         for _ in signals.forever() {
-            println!("\nSignal received, shutting down daemon...");
+            info!("\nSignal received, shutting down daemon...");
             keep_running_clone.store(false, Ordering::SeqCst);
         }
     });
 
-    println!("Daemon started.");
+    info!("Daemon started...");
 
     // Initialize the XKB context.
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
@@ -370,7 +369,7 @@ fn main() -> Result<()> {
         eprintln!("An error occurred: {:?}", e);
     }
 
-    println!("Daemon has shut down.");
+    info!("Daemon stopped.");
 
     Ok(())
 }
