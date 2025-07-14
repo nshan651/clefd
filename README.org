@@ -67,3 +67,12 @@ Alternatively, you can use the ~guix.scm~ manifest file to create an interactive
 #+begin_src sh
   guix shell -m guix.scm
 #+end_src
+
+
+* Roadmap
+- [ ] Config Hot-reloading
+- [ ] Basic cli help menu + options
+  - --help, --version, and config path
+- [ ] ~>=80%~ unit test coverage
+- [ ] Guix package
+- [ ] AUR package
