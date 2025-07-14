@@ -21,21 +21,21 @@ Super_L + Shift_L + Return : tmux
 *** Modifiers
 =clef= allows you to chain multiple modifier keys together. It supports the following XKB modifiers:
 #+begin_example
-Shift_L                       /* Left shift */
-Shift_R                       /* Right shift */
-Control_L                     /* Left control */
-Control_R                     /* Right control */
-Caps_Lock                     /* Caps lock */
-Shift_Lock                    /* Shift lock */
+Shift_L        /* Left shift */
+Shift_R        /* Right shift */
+Control_L      /* Left control */
+Control_R      /* Right control */
+Caps_Lock      /* Caps lock */
+Shift_Lock     /* Shift lock */
 
-Meta_L                        /* Left meta */
-Meta_R                        /* Right meta */
-Alt_L                         /* Left alt */
-Alt_R                         /* Right alt */
-Super_L                       /* Left super */
-Super_R                       /* Right super */
-Hyper_L                       /* Left hyper */
-Hyper_R                       /* Right hyper */
+Meta_L         /* Left meta */
+Meta_R         /* Right meta */
+Alt_L          /* Left alt */
+Alt_R          /* Right alt */
+Super_L        /* Left super */
+Super_R        /* Right super */
+Hyper_L        /* Left hyper */
+Hyper_R        /* Right hyper */
 #+end_example
 
 *** Other Key Names
@@ -68,11 +68,11 @@ Alternatively, you can use the ~guix.scm~ manifest file to create an interactive
   guix shell -m guix.scm
 #+end_src
 
-
-* Roadmap
+** Roadmap
 - [ ] Config Hot-reloading
 - [ ] Basic cli help menu + options
   - --help, --version, and config path
 - [ ] ~>=80%~ unit test coverage
+- [ ] CI/CD pipeline
 - [ ] Guix package
 - [ ] AUR package

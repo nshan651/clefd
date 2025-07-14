@@ -1,18 +1,19 @@
 use anyhow::{anyhow, Context, Result};
 use input::{event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait}, Libinput, LibinputInterface};
 use signal_hook::{consts::{SIGINT, SIGTERM}, iterator::Signals};
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::os::unix::{fs::OpenOptionsExt, io::OwnedFd};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::fs;
 use std::process::Command;
 use xkbcommon::xkb;
 use xkbcommon::xkb::{keysyms, Keysym, Keycode};
 use dirs;
-use log::{info, debug};
+use notify::{Watcher, RecursiveMode, RecommendedWatcher};
+use log::{info, debug, error};
 
 
 const MAX_PRESSED_KEYS: usize = 16;
@@ -40,19 +41,54 @@ impl LibinputInterface for Interface {
 }
 
 struct UserConfig {
-    keybindings: HashMap<String, String>,
+    keybindings: Arc<RwLock<HashMap<String, String>>>,
+    config_path: PathBuf,
+    file_watcher: Option<Box<dyn Watcher + Send + Sync>>,
 }
 
 impl UserConfig {
-    /// Creates an empty UserConfig.
-    fn from_str(content: &str) -> Result<Self> {
-	let keybindings = content
+    /// Initializes a new `UserConfig`.
+    fn new(config_path: PathBuf) -> Result<Self> {
+	info!("Loading user configuration from {:?}", config_path);
+	let keybindings = Self::read_config(&config_path)?;
+
+	Ok(UserConfig {
+	    keybindings: Arc::new(RwLock::new(keybindings)),
+	    config_path,
+	    file_watcher: None,
+	})
+    }
+
+    /// Read in the config file for the first time.
+    fn read_config(config_path: &Path) -> Result<HashMap<String, String>> {
+	let content = fs::read_to_string(config_path)
+	    .context(format!("Failed to read config at {:?}", config_path))?;
+	Self::parse_config(&content)
+	    .context(format!("Failed to parse config file at {:?}", config_path))
+    }
+
+    /// Re-parse the config file when changes are detected.
+    fn reload_config(&mut self) -> Result<()> {
+        info!("Reloading keybindings from {:?}", self.config_path);
+
+	let updated_keybindings = Self::read_config(&self.config_path)?;
+
+	// Acquire a write lock on the keybindings to replace its contents.
+	let mut keybindings_guard = self.keybindings.write()
+	    .map_err(|e| anyhow!("Failed to acquire a write lock for the \
+				  keybindings struct during reload: {}", e))?;
+
+	*keybindings_guard = updated_keybindings;
+	Ok(())
+    }
+	
+    /// Parse the config into a mapping of keybindings and commands to execute.
+    fn parse_config(content: &str) -> Result<HashMap<String, String>> {
+	content
             .lines()
             .enumerate()
             .filter_map(|(line_num, line)| Self::parse_line(line, line_num))
-            .collect::<Result<HashMap<String, String>>>()?;
-
-	Ok(UserConfig { keybindings })
+            .collect::<Result<HashMap<String, String>>>()
     }
 
     fn parse_line(line: &str, line_num: usize) -> Option<Result<(String, String)>> {
@@ -85,6 +121,89 @@ impl UserConfig {
 	}
 
 	Some(Ok((key, value)))
+    }
+
+    fn start_watcher(user_config: &Arc<RwLock<Self>>) -> Result<()> {
+	let watch_path = {
+            // Acquire a read lock to get the config file path, then clone it.
+            let config_guard = user_config.read()
+                .map_err(|e| anyhow!(
+		    "Failed to acquire read lock for config path: {}", e))?;
+            config_guard.config_path.clone()
+        };
+
+        // Set up a channel to receive events from the file watcher.
+        let (sender, receiver) = mpsc::channel();
+
+        // Create the file watcher.
+        let mut watcher = RecommendedWatcher::new(sender,
+						  notify::Config::default())
+            .context("Failed to create file watcher")?;
+
+        // Register the watch path.
+        watcher.watch(&watch_path, RecursiveMode::NonRecursive)
+            .context(format!("Failed to watch config file at {:?}", watch_path))?;
+
+        info!("Watching configuration file for changes: {:?}", watch_path);
+
+        // Pass a handler to the watcher thread, allowing it to interact with UserConfig.
+        let user_config_handler = Arc::clone(user_config);
+
+	// Spawn a new thread to process file watcher events
+        std::thread::spawn(move || {
+	    UserConfig::watcher_event_handler(receiver,
+					      user_config_handler,
+					      watch_path);
+	});
+
+
+	// Store the watcher handle within the UserConfig instance to keep it alive.
+        let mut config_guard = user_config.write()
+            .map_err(|e| anyhow!("Failed to acquire write lock to store \
+				  watcher handle: {}", e))?;
+
+        config_guard.file_watcher = Some(Box::new(watcher));
+	Ok(())
+    }
+
+    /// Handles events on the watcher thread.
+    ///
+    /// We want to filter on file save, and event kind `is_modify()` should be
+    /// sufficient for this. Note that different OSes send different variations
+    /// of EventKind::Modify.
+    fn watcher_event_handler(
+        receiver: mpsc::Receiver<Result<notify::Event, notify::Error>>,
+	user_config: Arc<RwLock<UserConfig>>,
+	watch_path: PathBuf) {
+
+        for event_result in receiver {
+            match event_result {
+                Ok(event) => {
+                    if event.kind.is_modify() {
+                        info!("Configuration file modified, reloading...");
+                        // Capture the reload attempt in a closure. 
+                        let reload_attempt = (|| {
+                            // Acquire a write lock on the UserConfig to call
+			    // its internal reload method.
+                            let mut config_guard = user_config.write()
+                                .map_err(|e| anyhow!(
+				    "Failed to acquire write lock on UserConfig \
+				     for reload: {}", e))?;
+
+                            config_guard.reload_config()
+                        })();
+
+                        if let Err(e) = reload_attempt {
+                            error!("Failed to reload keybindings: {}", e);
+                        } else {
+                            info!("Keybindings reloaded successfully from {:?}", watch_path);
+                        }
+                    }
+                }
+                Err(e) => error!("Configuration watch error: {:?}", e),
+            }
+        }
+        info!("Configuration watcher thread exiting.");
     }
 }
 
@@ -170,12 +289,13 @@ impl ChordState {
 /// Define a KeyboardClient, which includes the user's config data and a global
 /// chord state.
 struct KeyboardClient {
-    user_config: UserConfig,
+    // user_config: UserConfig,
+    user_config: Arc<RwLock<UserConfig>>,
     chord_state: ChordState,
 }
 
 impl KeyboardClient {
-    fn new(user_config: UserConfig, chord_state: ChordState) -> Self {
+    fn new(user_config: Arc<RwLock<UserConfig>>, chord_state: ChordState) -> Self {
 	Self {
 	    user_config,
 	    chord_state,
@@ -271,7 +391,16 @@ impl KeyboardClient {
 
     /// Execute an action based on the key press.
     fn exec_action(&self, keychord: &str) -> Result<()> {
-	let raw_command = match self.user_config.keybindings.get(keychord) {
+	// Acquire a lock on the UserConfig.
+	let user_config_guard = self.user_config.read()
+            .map_err(|e| anyhow!(
+		"Failed to acquire read lock on user config: {}", e))?;
+
+	// Now acuqire a lock on the keybindings themselves.
+	let keybindings_guard = user_config_guard.keybindings.read()
+	    .map_err(|e| anyhow!("Failed to acquire read lock on keybindings map: {}", e))?;
+
+	let raw_command = match keybindings_guard.get(keychord) {
 	    Some(cmd) => cmd,
 	    None => return Ok(()),
 	};
@@ -317,7 +446,7 @@ fn main() -> Result<()> {
     // Set up an atomic boolean to control the main loop.
     // This allows us to gracefully shut down from a signal handler.
     let keep_running = Arc::new(AtomicBool::new(true));
-    let keep_running_clone = keep_running.clone();
+    let keep_running_handler = keep_running.clone();
 
     // Register a signal handler for SIGINT and SIGTERM to ensure graceful shutdowns.
     let mut signals = Signals::new(&[SIGINT, SIGTERM])
@@ -327,7 +456,7 @@ fn main() -> Result<()> {
     std::thread::spawn(move || {
         for _ in signals.forever() {
             info!("\nSignal received, shutting down daemon...");
-            keep_running_clone.store(false, Ordering::SeqCst);
+            keep_running_handler.store(false, Ordering::SeqCst);
         }
     });
 
@@ -354,12 +483,15 @@ fn main() -> Result<()> {
     let config_dir = dirs::config_dir()
         .ok_or_else(|| anyhow!("Could not determine user config directory"))?;
     let config_path = config_dir.join("clef").join("clefrc");
-    let content = fs::read_to_string(config_path)?;
 
-    let user_config = UserConfig::from_str(&content)?;
+    let user_config = UserConfig::new(config_path)?;
+    let shared_user_config = Arc::new(RwLock::new(user_config));
     let chord_state = ChordState::new();
+
+    UserConfig::start_watcher(&shared_user_config)?;
+
     let mut kb_client = KeyboardClient::new(
-	user_config,
+	shared_user_config,
 	chord_state);
     
     // Run the main event loop.
