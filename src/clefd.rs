@@ -396,7 +396,7 @@ impl KeyboardClient {
             .map_err(|e| anyhow!(
 		"Failed to acquire read lock on user config: {}", e))?;
 
-	// Now acuqire a lock on the keybindings themselves.
+	// Now acquire a lock on the keybindings themselves.
 	let keybindings_guard = user_config_guard.keybindings.read()
 	    .map_err(|e| anyhow!("Failed to acquire read lock on keybindings map: {}", e))?;
 
