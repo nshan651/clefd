@@ -60,7 +60,7 @@ impl UserConfig {
 
 	// Ignore whitespace and comments.
 	if line.is_empty() || line.starts_with('#') {
-            return None;
+            return None
 	}
 
 	// Split on first colon only.
@@ -106,7 +106,7 @@ impl ChordState {
     fn add_key(&mut self, keycode: xkb::Keycode) {
         if self.pressed_keys.len() >= MAX_PRESSED_KEYS {
             eprintln!("Warning: Maximum number of pressed keys exceeded.");
-            return;
+            return
         }
         self.pressed_keys.insert(keycode);
     }
@@ -121,7 +121,7 @@ impl ChordState {
     /// A valid chord consists of one or more modifiers and EXACTLY ONE non-modifier
     /// key. The resulting string is canonical: modifiers are sorted alphabetically,
     /// followed by the single non-modifier key, all space-separated.
-    fn get_keychord(&self, xkb_state: &xkb::State) -> Result<String> {
+    fn get_keychord(&self, xkb_state: &xkb::State) -> Option<String> {
         let mut modifier_names = Vec::new();
         let mut key_names = Vec::new();
 
@@ -137,12 +137,9 @@ impl ChordState {
             }
         }
 
-	// A valid chord trigger has exactly one non-modifier key.
+	// A valid key sequence always ends with exactly one non-modifier key.
         if key_names.len() != 1 {
-            return Err(anyhow!(
-                "Invalid chord: expected exactly one non-modifier key, got {}.",
-                key_names.len()
-            ));
+            return None
         }
 
         // Sort modifiers alphabetically for a canonical representation.
@@ -153,7 +150,7 @@ impl ChordState {
         chord_parts.extend(key_names);
         let keychord = chord_parts.join(" ");
 
-	Ok(keychord)
+	Some(keychord)
     }
 
     /// Checks if a given keysym is a modifier key.
@@ -214,8 +211,9 @@ impl KeyboardClient {
 
 		// A non-modifier signals the end of a key sequence.
 		if !ChordState::is_modifier_keysym(keysym) {
-                    let keychord = self.chord_state.get_keychord(state)?;
-		    self.exec_action(&keychord)?;
+                    if let Some(keychord) = self.chord_state.get_keychord(state) {
+			self.exec_action(&keychord)?;
+		    }
 		}
             }
             KeyState::Released => {
@@ -286,13 +284,12 @@ impl KeyboardClient {
 	let mut command = Command::new(program);
 	command.args(args);
 
-	debug!("Attempting to execute '{}' with args: {:?}", program, args);
+	debug!("Executing '{}' with args: {:?}", program, args);
 
 	let mut child = command.spawn()
             .context(format!(
-		"Failed to spawn command '{}' (executable: '{}').",
-		raw_command,
-		program))?;
+		"Failed to spawn command '{}'",
+		raw_command))?;
 
 	let status = child.wait()
             .context(format!(
@@ -304,7 +301,8 @@ impl KeyboardClient {
 	} else {
             Err(anyhow!(
 		"Command '{}' exited with non-zero status: {:?}",
-		raw_command, status
+		raw_command,
+		status,
             ))
 	}
     }
