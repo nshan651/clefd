@@ -14,9 +14,15 @@ use xkbcommon::xkb::{keysyms, Keysym, Keycode};
 use dirs;
 use notify::{Watcher, RecursiveMode, RecommendedWatcher};
 use log::{info, debug, error};
-
+use clap::Parser;
 
 const MAX_PRESSED_KEYS: usize = 16;
+
+#[derive(Parser, Debug)]
+#[command(version, about = "A keyboard shortcut manager daemon.", long_about = None)]
+struct Args {
+    // Empty implementation.
+}
 
 /// A simple interface for libinput to open and close devices.
 /// This is required by libinput to interact with the underlying system devices.
@@ -439,6 +445,8 @@ impl KeyboardClient {
 
 /// Main entry point for the application.
 fn main() -> Result<()> {
+    Args::parse();
+
     // Init info logging.
     env_logger::Builder::from_env(
 	env_logger::Env::default().default_filter_or("info")).init();
