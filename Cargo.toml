@@ -29,7 +29,3 @@ log = "0.4.27"
 env_logger = "0.11.8"
 notify = "8.1.0"
 clap = { version = "4.5.41", features = ["derive"] }
-
-[[bin]]
-name = "clefd"
-path = "src/clefd.rs"
