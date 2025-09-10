@@ -1,3 +1,12 @@
+//! Provides loading and live reloading of user-defined keybinding configuration.
+//!
+//! The [`UserConfig`] struct provides a thread-safe mapping from key sequences
+//! to commands, stored in an [`Arc<RwLock<_>>`] for safe concurrent access.
+//! Configurations are loaded from a simple, human-editable file format, and
+//! the module automatically watches the file for changes, reloading keybindings
+//! on the fly. Parsing errors and I/O issues are surfaced using [`anyhow`] and
+//! logged via [`log`] to help users diagnose problems quickly.
+
 use anyhow::{anyhow, Context, Result};
 use log::{error, info};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -204,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_config_success() {
+    fn parse_config_should_succeed_with_valid_content() {
         let config_content = r#"
             # This is a comment
             Super_L + w : firefox
@@ -224,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_config_empty() {
+    fn parse_config_should_return_empty_map_for_empty_input() {
         let config_content = "";
         let keybindings =
             UserConfig::parse_config(config_content).expect("Parsing empty config should succeed");
@@ -232,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_config_comments_and_ws() {
+    fn parse_config_should_ignore_comments_and_whitespace() {
         let config_content = r#"
             # Only comments and whitespaces!!!
 
@@ -248,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_config_invalid_line_no_colon() {
+    fn parse_config_should_fail_without_colon_separator() {
         let config_content = "invalid line";
         let result = UserConfig::parse_config(config_content);
         assert!(result.is_err(), "Parsing invalid line should fail");
@@ -257,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_config_invalid_line_empty_key() {
+    fn parse_config_should_fail_when_key_is_empty() {
         let config_content = ":command";
         let result = UserConfig::parse_config(config_content);
         assert!(result.is_err(), "Parsing line with empty key should fail");
@@ -266,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_config_invalid_line_empty_value() {
+    fn parse_config_should_fail_when_value_is_empty() {
         let config_content = "key:";
         let result = UserConfig::parse_config(config_content);
         assert!(result.is_err(), "Parsing line with empty value should fail");
@@ -275,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn read_config_success() {
+    fn read_config_should_succeed_with_valid_file() {
         let temp_file = create_temp_config("test_key: test_command");
         let config_path = temp_file.path().to_path_buf();
         let keybindings = UserConfig::read_config(&config_path)
@@ -287,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn read_config_file_not_found() {
+    fn read_config_should_fail_for_nonexistent_file() {
         let non_existent_path = PathBuf::from("non_existent_config.txt");
         let result = UserConfig::read_config(&non_existent_path);
         assert!(result.is_err(), "Reading non-existent file should fail");
@@ -296,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn read_config_invalid_content() {
+    fn read_config_should_fail_with_invalid_content() {
         let temp_file = create_temp_config("invalid line content");
         let config_path = temp_file.path().to_path_buf();
         let result = UserConfig::read_config(&config_path);
@@ -309,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn new_user_config_success() {
+    fn new_user_should_initialize_correctly_with_valid_config() {
         let temp_file = create_temp_config("hotkey: execute_something");
         let config_path = temp_file.path().to_path_buf();
         let user_config = UserConfig::new(config_path.clone())
@@ -324,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn reload_config_success() {
+    fn reload_should_update_keybindings_when_file_changes() {
         let temp_file = create_temp_config("key1: command1\n");
         let config_file_path = temp_file.path().to_path_buf();
 

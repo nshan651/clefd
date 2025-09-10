@@ -6,6 +6,12 @@ SYSTEMD_UNIT_DIR ?= $(HOME)/.config/systemd/user
 all:
 	cargo build --release
 
+test:
+	cargo test
+
+cov:
+	cargo tarpaulin --out Html
+
 clean:
 	rm -rf ./target
 
