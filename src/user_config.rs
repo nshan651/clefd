@@ -207,8 +207,8 @@ mod tests {
 
     /// Helper to create a temporary config file.
     fn create_temp_config(content: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new().expect("Failed to create temporary file");
-        writeln!(file, "{}", content).expect("Failed to write to temporary file");
+        let mut file = NamedTempFile::new().expect("Failed to create temporary file.");
+        writeln!(file, "{}", content).expect("Failed to write to temporary file.");
         file
     }
 

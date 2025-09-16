@@ -1,3 +1,14 @@
+//! Provides keyboard chord detection and state management for multi-key shortcuts.
+//!
+//! This module tracks the current state of pressed keys and constructs canonical
+//! key chord representations for keybinding lookups. It distinguishes between
+//! modifier keys (Shift, Control, Alt, etc.) and regular keys, ensuring that
+//! valid chords consist of one or more modifiers plus exactly one non-modifier key.
+//!
+//! The [`ChordState`] struct maintains a set of currently pressed keycodes and
+//! provides methods to add/remove keys and generate chord strings. Chord strings
+//! are normalized to a canonical format where modifiers are sorted alphabetically
+//! and separated by spaces (e.g., "Alt_L Control_L x" for Ctrl+Alt+X).
 use std::collections::HashSet;
 use xkbcommon::xkb;
 use xkbcommon::xkb::{keysyms, Keysym};
@@ -88,5 +99,161 @@ impl ChordState {
                 | keysyms::KEY_Caps_Lock
                 | keysyms::KEY_Shift_Lock
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xkbcommon::xkb::{self, Keycode};
+
+    fn init_xkb_state() -> xkb::State {
+        // Initialize the XKB context.
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+
+        // Create a keymap from the system's current keyboard configuration.
+        let keymap = xkb::Keymap::new_from_names(
+            &context,
+            "",   // rules
+            "",   // model
+            "",   // layout
+            "",   // variant
+            None, // options
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        ).expect("Failed to create XKB keymap");
+
+        xkb::State::new(&keymap)
+    }
+
+    // Keycodes are hardware-dependent, so we use the keysym enum to lookup the
+    // correct keycode based on the given keymap.
+    fn get_keycode(xkb_state: &xkb::State,
+                   target_keycode: u32) -> Keycode {
+        let keymap = xkb_state.get_keymap();
+        let min_keycode = keymap.min_keycode().raw();
+        let max_keycode = keymap.max_keycode().raw();
+
+        println!("MINI: {:?}, MAXI: {:?}", keymap.min_keycode(), keymap.max_keycode());
+        println!("MIN: {:?}, MAX: {:?}", min_keycode, max_keycode);
+        
+        for kc in min_keycode..=max_keycode {
+            let keycode = Keycode::from(kc);
+            let keysym = xkb_state.key_get_one_sym(keycode);
+
+            if keysym.raw() == target_keycode {
+                return keycode;
+            }
+        }
+        panic!("Could not find keycode for keysym: {}", target_keycode);
+    }
+
+    #[test]
+    fn new_should_start_with_empty_pressed_keys() {
+        let state = ChordState::new();
+        assert!(state.pressed_keys.is_empty());
+    }
+
+    #[test]
+    fn add_key_should_store_key_in_pressed_keys() {
+        let xkb_state = init_xkb_state();
+        let keycode = xkb_state.get_keymap().min_keycode(); //get_keycode(&xkb_state, keysyms::KEY_a);
+        let mut state = ChordState::new();
+        state.add_key(keycode);
+        assert!(state.pressed_keys.contains(&keycode));
+    }
+
+    #[test]
+    fn add_key_should_ignore_duplicates() {
+        let xkb_state = init_xkb_state();
+        let keycode = get_keycode(&xkb_state, keysyms::KEY_a);
+        let mut state = ChordState::new();
+
+        state.add_key(keycode);
+        state.add_key(keycode);
+
+        assert_eq!(state.pressed_keys.len(), 1);
+    }
+
+    #[test]
+    fn add_key_should_warn_when_exceeding_capacity() {
+        let xkb_state = init_xkb_state();
+        let mut state = ChordState::new();
+        
+        // Fill the hashset to capacity
+        for i in 0..MAX_PRESSED_KEYS {
+            let keycode = xkb::Keycode::from(xkb_state.get_keymap().min_keycode().raw() + i as u32);
+            state.add_key(keycode);
+        }
+        
+        // Verify we have exactly MAX_PRESSED_KEYS
+        assert_eq!(state.pressed_keys.len(), MAX_PRESSED_KEYS);
+        
+        // Try to add one more key - this should trigger the warning and not add the key
+        let extra_keycode = xkb::Keycode::from(
+            xkb_state.get_keymap().min_keycode().raw() + MAX_PRESSED_KEYS as u32);
+        state.add_key(extra_keycode);
+        
+        // Verify the key was not added (still at capacity)
+        assert_eq!(state.pressed_keys.len(), MAX_PRESSED_KEYS);
+        assert!(!state.pressed_keys.contains(&extra_keycode));
+    }
+
+    #[test]
+    fn remove_key_should_remove_key_from_pressed_keys() {
+        let xkb_state = init_xkb_state();
+        let keycode = get_keycode(&xkb_state, keysyms::KEY_z);
+        let mut state = ChordState::new();
+
+        state.add_key(keycode);
+        state.remove_key(keycode);
+
+        assert!(!state.pressed_keys.contains(&keycode));
+    }
+
+    #[test]
+    fn is_modifier_keysym_should_return_true_with_modifier() {
+        let keysym = Keysym::new(keysyms::KEY_Super_L);
+        let result = ChordState::is_modifier_keysym(keysym);
+        assert!(result);
+    }
+
+    #[test]
+    fn is_modifier_keysym_should_return_false_with_non_modifier() {
+        let keysym = Keysym::new(keysyms::KEY_a);
+        let result = ChordState::is_modifier_keysym(keysym);
+        assert!(!result);
+    }
+
+    #[test]
+    fn get_keychord_should_succeed_with_valid_content() {
+        let xkb_state = init_xkb_state();
+        let keycodes = [
+            get_keycode(&xkb_state, keysyms::KEY_Super_L),
+            get_keycode(&xkb_state, keysyms::KEY_w),
+        ];
+        let mut state = ChordState::new();
+        state.pressed_keys = keycodes.into_iter().collect();
+
+        let keychord = state.get_keychord(&xkb_state);
+
+        assert_eq!(state.pressed_keys.len(), 2);
+        assert_eq!(keychord, Some(String::from("Super_L w")));
+    }
+
+    #[test]
+    fn get_keychord_multi_nonmodifiers_should_return_none() {
+        let keycodes = [
+            xkb::Keycode::from(keysyms::KEY_Super_L),
+            xkb::Keycode::from(keysyms::KEY_a),
+            xkb::Keycode::from(keysyms::KEY_b),
+        ];
+
+        let xkb_state = init_xkb_state();
+        let mut state = ChordState::new();
+        state.pressed_keys = keycodes.into_iter().collect();
+
+        let keychord = state.get_keychord(&xkb_state);
+
+        assert!(keychord.is_none());
     }
 }
