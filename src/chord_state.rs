@@ -8,7 +8,7 @@
 //! The [`ChordState`] struct maintains a set of currently pressed keycodes and
 //! provides methods to add/remove keys and generate chord strings. Chord strings
 //! are normalized to a canonical format where modifiers are sorted alphabetically
-//! and separated by spaces (e.g., "Alt_L Control_L x" for Ctrl+Alt+X).
+//! and separated by spaces (e.g. "Alt_L Control_L x" for Ctrl+Alt+X).
 use std::collections::HashSet;
 use xkbcommon::xkb;
 use xkbcommon::xkb::{keysyms, Keysym};
@@ -105,7 +105,8 @@ impl ChordState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xkbcommon::xkb::{self, Keycode};
+    // use xkbcommon::xkb::{self, Keycode};
+    use xkbcommon::xkb;
 
     fn init_xkb_state() -> xkb::State {
         // Initialize the XKB context.
@@ -125,28 +126,6 @@ mod tests {
         xkb::State::new(&keymap)
     }
 
-    // Keycodes are hardware-dependent, so we use the keysym enum to lookup the
-    // correct keycode based on the given keymap.
-    fn get_keycode(xkb_state: &xkb::State,
-                   target_keycode: u32) -> Keycode {
-        let keymap = xkb_state.get_keymap();
-        let min_keycode = keymap.min_keycode().raw();
-        let max_keycode = keymap.max_keycode().raw();
-
-        println!("MINI: {:?}, MAXI: {:?}", keymap.min_keycode(), keymap.max_keycode());
-        println!("MIN: {:?}, MAX: {:?}", min_keycode, max_keycode);
-        
-        for kc in min_keycode..=max_keycode {
-            let keycode = Keycode::from(kc);
-            let keysym = xkb_state.key_get_one_sym(keycode);
-
-            if keysym.raw() == target_keycode {
-                return keycode;
-            }
-        }
-        panic!("Could not find keycode for keysym: {}", target_keycode);
-    }
-
     #[test]
     fn new_should_start_with_empty_pressed_keys() {
         let state = ChordState::new();
@@ -156,7 +135,7 @@ mod tests {
     #[test]
     fn add_key_should_store_key_in_pressed_keys() {
         let xkb_state = init_xkb_state();
-        let keycode = xkb_state.get_keymap().min_keycode(); //get_keycode(&xkb_state, keysyms::KEY_a);
+        let keycode = xkb_state.get_keymap().min_keycode();
         let mut state = ChordState::new();
         state.add_key(keycode);
         assert!(state.pressed_keys.contains(&keycode));
@@ -165,7 +144,7 @@ mod tests {
     #[test]
     fn add_key_should_ignore_duplicates() {
         let xkb_state = init_xkb_state();
-        let keycode = get_keycode(&xkb_state, keysyms::KEY_a);
+        let keycode = xkb_state.get_keymap().min_keycode();
         let mut state = ChordState::new();
 
         state.add_key(keycode);
@@ -181,27 +160,27 @@ mod tests {
         
         // Fill the hashset to capacity
         for i in 0..MAX_PRESSED_KEYS {
-            let keycode = xkb::Keycode::from(xkb_state.get_keymap().min_keycode().raw() + i as u32);
-            state.add_key(keycode);
+            let keycode = xkb_state.get_keymap().min_keycode().raw() + i as u32;
+            state.add_key(keycode.into());
         }
         
         // Verify we have exactly MAX_PRESSED_KEYS
         assert_eq!(state.pressed_keys.len(), MAX_PRESSED_KEYS);
         
         // Try to add one more key - this should trigger the warning and not add the key
-        let extra_keycode = xkb::Keycode::from(
-            xkb_state.get_keymap().min_keycode().raw() + MAX_PRESSED_KEYS as u32);
-        state.add_key(extra_keycode);
+        let extra_keycode =
+            xkb_state.get_keymap().min_keycode().raw() + MAX_PRESSED_KEYS as u32;
+        state.add_key(extra_keycode.into());
         
         // Verify the key was not added (still at capacity)
         assert_eq!(state.pressed_keys.len(), MAX_PRESSED_KEYS);
-        assert!(!state.pressed_keys.contains(&extra_keycode));
+        assert!(!state.pressed_keys.contains(&extra_keycode.into()));
     }
 
     #[test]
     fn remove_key_should_remove_key_from_pressed_keys() {
         let xkb_state = init_xkb_state();
-        let keycode = get_keycode(&xkb_state, keysyms::KEY_z);
+        let keycode = xkb_state.get_keymap().min_keycode();
         let mut state = ChordState::new();
 
         state.add_key(keycode);
@@ -227,10 +206,13 @@ mod tests {
     #[test]
     fn get_keychord_should_succeed_with_valid_content() {
         let xkb_state = init_xkb_state();
+        let keymap = xkb_state.get_keymap();
+
         let keycodes = [
-            get_keycode(&xkb_state, keysyms::KEY_Super_L),
-            get_keycode(&xkb_state, keysyms::KEY_w),
+            keymap.key_by_name("LWIN").unwrap(),
+            keymap.key_by_name("AD02").unwrap(),
         ];
+
         let mut state = ChordState::new();
         state.pressed_keys = keycodes.into_iter().collect();
 
@@ -242,10 +224,12 @@ mod tests {
 
     #[test]
     fn get_keychord_multi_nonmodifiers_should_return_none() {
+        let xkb_state = init_xkb_state();
+        let keymap = xkb_state.get_keymap();
         let keycodes = [
-            xkb::Keycode::from(keysyms::KEY_Super_L),
-            xkb::Keycode::from(keysyms::KEY_a),
-            xkb::Keycode::from(keysyms::KEY_b),
+            keymap.key_by_name("LWIN").unwrap(),
+            keymap.key_by_name("AE01").unwrap(),
+            keymap.key_by_name("AE02").unwrap(),
         ];
 
         let xkb_state = init_xkb_state();
