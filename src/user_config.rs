@@ -139,7 +139,9 @@ impl UserConfig {
 
         // Spawn a new thread to process file watcher events
         std::thread::spawn(move || {
-            UserConfig::watcher_event_handler(receiver, user_config_handler, watch_path);
+            UserConfig::watcher_event_handler(receiver,
+                                              user_config_handler,
+                                              watch_path);
         });
 
         // Store the watcher handle within the UserConfig instance to keep it alive.
@@ -188,7 +190,8 @@ impl UserConfig {
                         if let Err(e) = reload_attempt {
                             error!("Failed to reload keybindings: {}", e);
                         } else {
-                            info!("Keybindings reloaded successfully from {:?}", watch_path);
+                            info!("Keybindings reloaded successfully from {:?}",
+                                  watch_path);
                         }
                     }
                 }
@@ -207,8 +210,10 @@ mod tests {
 
     /// Helper to create a temporary config file.
     fn create_temp_config(content: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new().expect("Failed to create temporary file.");
-        writeln!(file, "{}", content).expect("Failed to write to temporary file.");
+        let mut file = NamedTempFile::new()
+            .expect("Failed to create temporary file.");
+        writeln!(file, "{}", content)
+            .expect("Failed to write to temporary file.");
         file
     }
 

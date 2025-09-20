@@ -63,15 +63,17 @@ fn main() -> Result<()> {
     let xkb_state = xkb::State::new(&keymap);
 
     // Parse config from XDG_CONFIG.
-    let config_dir =
-        dirs::config_dir().ok_or_else(|| anyhow!("Could not determine user config directory"))?;
+    let config_dir = dirs::config_dir()
+        .ok_or_else(|| anyhow!("Could not determine user config directory"))?;
     let config_path = config_dir.join("clef").join("clefrc");
 
-    let user_config = UserConfig::new(config_path)?;
+    let user_config = UserConfig::new(config_path)
+        .expect("User config failed to initialize.");
     let shared_user_config = Arc::new(RwLock::new(user_config));
     let chord_state = ChordState::new();
 
-    UserConfig::start_watcher(&shared_user_config)?;
+    UserConfig::start_watcher(&shared_user_config)
+        .expect("Failed to start watcher thread.");
 
     let mut kb_client = KeyboardClient::new(shared_user_config, chord_state);
 

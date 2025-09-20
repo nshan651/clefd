@@ -1,3 +1,12 @@
+//! Provides the main keyboard event loop and command execution logic.
+//!
+//! This module integrates user configuration, key state management, and input
+//! handling to provide a shortcut detection and execution pipeline.
+//!
+//! The [`KeyboardClient`] maintains the core event loop that listens for
+//! keyboard input via libinput, tracks multi-key chord sequences using
+//! [`ChordState`], matches completed chords against user-defined keybindings
+//! from [`UserConfig`], and executes the corresponding shell commands.
 use crate::chord_state::ChordState;
 use crate::user_config::UserConfig;
 use anyhow::{anyhow, Context, Result};
@@ -54,8 +63,8 @@ impl KeyboardClient {
 
     /// Handles a single keyboard event.
     ///
-    /// This function is a placeholder for your actual chord processing logic.
-    /// It takes the current XKB state and the keyboard event from libinput.
+    /// Converts the libinput keycode to XKB format, tracks pressed/released
+    /// keys, and triggers actions for completed key chords.
     ///
     /// # Arguments
     /// - `state` - A mutable reference to the XKB state.
@@ -190,5 +199,97 @@ impl KeyboardClient {
                 status,
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+    use std::sync::{Arc, RwLock};
+    use input::event::keyboard::KeyboardEvent;
+    use xkbcommon::xkb;
+
+    /// Write a temporary config file and return its PathBuf.
+    fn create_temp_config(content: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new()
+            .expect("Failed to create temporary file.");
+        writeln!(file, "{}", content)
+            .expect("Failed to write to temporary file.");
+        file
+    }
+
+
+    #[test]
+    fn new_should_store_user_config_and_chord_state() {
+        let temp_file = create_temp_config("# test empty config\n");
+        let config_path = temp_file.path().to_path_buf();
+
+        let user_config = UserConfig::new(config_path.clone())
+            .expect("User config failed to initialize.");
+        let shared_user_config = Arc::new(RwLock::new(user_config));
+        let chord_state = crate::chord_state::ChordState::new();
+
+        let kb_client = KeyboardClient::new(Arc::clone(&shared_user_config), chord_state);
+
+        assert!(Arc::ptr_eq(&shared_user_config, &kb_client.user_config),
+                "KeyboardClient did not retain the same ptr.");
+    }
+
+    #[test]
+    fn exec_action_should_execute_success_and_failure() {
+        let temp_file = create_temp_config("Control_L+x: /bin/true\nAlt_L+y: /bin/false\n");
+        let config_path = temp_file.path().to_path_buf();
+
+        let user_config = crate::user_config::UserConfig::new(config_path.clone())
+            .expect("Failed to create a new user config.");
+        let shared_user_config = Arc::new(RwLock::new(user_config));
+        let chord_state = crate::chord_state::ChordState::new();
+        let kb_client = KeyboardClient::new(Arc::clone(&shared_user_config),
+                                            chord_state);
+
+        // Act & Assert: success case (/bin/true)
+        let res_ok = kb_client.exec_action("Control_L x");
+        assert!(
+            res_ok.is_ok(),
+            "exec_action expected Ok for /bin/true, got: {:?}",
+            res_ok
+        );
+
+        // Act & Assert: failure case (/bin/false)
+        let res_err = kb_client.exec_action("Alt_L y");
+        assert!(
+            res_err.is_err(),
+            "exec_action expected Err for /bin/false, got: {:?}",
+            res_err
+        );
+    }
+
+    #[test]
+    fn exec_action_should_return_ok_when_keychord_not_found() {
+        let temp_file = create_temp_config("");
+        let config_path = temp_file.path().to_path_buf();
+
+        let user_config = crate::user_config::UserConfig::new(config_path.clone())
+            .expect("Failed to create a new user config.");
+        let shared_user_config = Arc::new(RwLock::new(user_config));
+        let chord_state = crate::chord_state::ChordState::new();
+        let kb_client = KeyboardClient::new(Arc::clone(&shared_user_config),
+                                            chord_state);
+
+        let result = kb_client.exec_action("Control_L x");
+
+        assert!(
+            result.is_ok(),
+            "exec_action should return Ok(()) when keychord not found, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn keyboard_event_handler_should_exec_on_non_modifier_key_press() {
+        todo!("Figure out how to mock a KeyboardEvent!");
     }
 }
