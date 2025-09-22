@@ -1,0 +1,38 @@
+name: Code Coverage
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    name: Test and Coverage Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: actions/setup-rust@v1
+      with:
+        toolchain: stable
+        profile: minimal
+
+    - name: Install cargo-tarpaulin
+      # Install tarpaulin via cargo to ensure it's available in the PATH
+      run: |
+        cargo install cargo-tarpaulin --locked --force
+
+    - name: Run tests with coverage and enforce 70% minimum
+      # The --fail-under flag makes tarpaulin exit with a non-zero code
+      # if coverage is below the specified percentage, which fails the GitHub Action.
+      run: |
+        cargo tarpaulin --verbose --workspace --fail-under 70

@@ -2,6 +2,8 @@
 
 A universal keybindings manager.
 
+[[https://github.com/nshan651/clef/actions][https://github.com/nshan651/clef/actions/workflows/coverage.yml/badge.svg]]
+
 ** Usage
 =clef= is a universal keybindings daemon that reacts to input events by executing commands. It reads in a configuration file located at ~$XDG_CONFIG_HOME/clef/clefrc~ by default. Here the user can define a series of bindings that correspond to different commands.
 
