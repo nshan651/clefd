@@ -208,8 +208,6 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
     use std::sync::{Arc, RwLock};
-    use input::event::keyboard::KeyboardEvent;
-    use xkbcommon::xkb;
 
     /// Write a temporary config file and return its PathBuf.
     fn create_temp_config(content: &str) -> NamedTempFile {
