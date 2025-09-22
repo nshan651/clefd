@@ -20,6 +20,17 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Add runner user to the input group.
+      run: sudo gpasswd -a $USER input
+
+    - name: Install system dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          libudev-dev
+          libinput-dev
+          libxkbcommon-dev
+
     - name: Install Rust stable toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -30,11 +41,6 @@ jobs:
       run: |
         cargo install cargo-tarpaulin --locked --force
 
-    - name: Add runner user to the input group.
-      run: sudo gpasswd -a $USER input
-
     - name: Run tests with coverage and enforce 70% minimum
-      # The --fail-under flag makes tarpaulin exit with a non-zero code
-      # if coverage is below the specified percentage, which fails the GitHub Action.
       run: |
         cargo tarpaulin --verbose --workspace --fail-under 70
