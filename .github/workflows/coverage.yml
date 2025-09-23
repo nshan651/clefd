@@ -48,4 +48,4 @@ jobs:
 
     - name: Run tests with coverage and enforce 70% minimum
       run: |
-        cargo tarpaulin --verbose --workspace --fail-under 70
+        cargo tarpaulin --verbose --fail-under 70

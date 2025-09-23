@@ -84,7 +84,7 @@ fn run(keep_running: Arc<AtomicBool>,
 
     // Notify tests that setup is complete via handshake.
     if let Some(tx) = ready_tx {
-        let _ = tx.send(()); // ignore if receiver already dropped
+        let _ = tx.send(()); // Ignore if receiver already dropped.
     }
 
     // Run the main event loop.
@@ -98,8 +98,7 @@ fn run(keep_running: Arc<AtomicBool>,
 }
 
 /// Main entry point for the application.
-// fn main() -> Result<()> {
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     Args::parse();
     let keep_running = Arc::new(AtomicBool::new(true));
     run(keep_running, None)
@@ -130,7 +129,6 @@ mod tests {
 
         handle.join().expect("Thread should join.");
 
-        // Simple assertion to prove we reached here
         assert!(!keep_running.load(Ordering::SeqCst));
     }
 

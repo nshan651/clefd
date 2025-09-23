@@ -1,7 +1,7 @@
-PROG := clefd
-PREFIX ?= /usr/local
-BINDIR ?= $(PREFIX)/bin
+PKGNAME := clefd
+BINDIR ?= /usr/local/bin
 SYSTEMD_UNIT_DIR ?= $(HOME)/.config/systemd/user
+INIT_SYS = $(shell ps -p 1 -o comm=)
 
 all:
 	cargo build --release
@@ -9,20 +9,22 @@ all:
 test:
 	cargo test
 
+check:
+	cargo fmt -- --check
+	cargo clippy --all-targets --all-features -- -D warnings
+
 cov:
-	cargo tarpaulin --out Html
+	cargo tarpaulin --out Html --fail-under 70
 
 clean:
 	rm -rf ./target
 
 install:
-	sudo install -Dm755 ./target/release/$(PROG) $(BINDIR)/$(PROG)
-	install -Dm644 dist/systemd/$(PROG).service $(SYSTEMD_UNIT_DIR)/$(PROG).service
-	systemctl --user enable --now $(PROG).service
+	install -Dm755 ./target/release/$(PKGNAME) $(BINDIR)/$(PKGNAME)
+	install -Dm644 dist/systemd/$(PKGNAME).service $(SYSTEMD_UNIT_DIR)/$(PKGNAME).service
 
 uninstall:
-	systemctl --user disable --now $(PROG).service
-	rm -f $(BINDIR)/$(PROG) \
-		$(SYSTEMD_UNIT_DIR)/$(PROG).service
+	rm -f $(BINDIR)/$(PKGNAME) \
+		$(SYSTEMD_UNIT_DIR)/$(PKGNAME).service
 
 .PHONY: all clean install uninstall

@@ -137,7 +137,7 @@ impl UserConfig {
         // Pass a handler to the watcher thread, allowing it to interact with UserConfig.
         let user_config_handler = Arc::clone(user_config);
 
-        // Spawn a new thread to process file watcher events
+        // Spawn a new thread to process file watcher events.
         std::thread::spawn(move || {
             UserConfig::watcher_event_handler(receiver,
                                               user_config_handler,
