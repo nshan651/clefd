@@ -67,7 +67,7 @@ fn run(keep_running: Arc<AtomicBool>,
     // Parse config from XDG_CONFIG.
     let config_dir = dirs::config_dir()
         .ok_or_else(|| anyhow!("Could not determine user config directory."))?;
-    let config_path = config_dir.join("clef").join("clefrc");
+    let config_path = config_dir.join("clefd").join("clefdrc");
 
     // Load user config and wrap it for shared access.
     let user_config = UserConfig::new(config_path)

@@ -1,6 +1,6 @@
 [Unit]
 Description=clefd hotkey daemon
-Documentation=https://github.com/nshan651/clef
+Documentation=https://github.com/nshan651/clefd
 
 [Service]
 ExecStart=/usr/local/bin/clefd

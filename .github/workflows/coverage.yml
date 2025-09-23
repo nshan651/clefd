@@ -43,8 +43,8 @@ jobs:
 
     - name: Create empty user config
       run: |
-        mkdir -p /home/runner/.config/clef
-        touch /home/runner/.config/clef/clefrc
+        mkdir -p /home/runner/.config/clefd
+        touch /home/runner/.config/clefd/clefdrc
 
     - name: Run tests with coverage and enforce 70% minimum
       run: |
