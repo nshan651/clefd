@@ -38,8 +38,8 @@ fn run(keep_running: Arc<AtomicBool>,
 
     // Spawn a thread to listen for signals.
     std::thread::spawn(move || {
-        for _ in signals.forever() {
-            info!("\nSignal received, shutting down daemon...");
+        for sig in signals.forever() {
+            info!("\nReceived signal {:?}, shutting down daemon...", sig);
             keep_running_handler.store(false, Ordering::SeqCst);
         }
     });
