@@ -121,10 +121,10 @@ impl UserConfig {
         };
 
         // Set up a channel to receive events from the file watcher.
-        let (sender, receiver) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
 
         // Create the file watcher.
-        let mut watcher = RecommendedWatcher::new(sender, notify::Config::default())
+        let mut watcher = RecommendedWatcher::new(tx, notify::Config::default())
             .context("Failed to create file watcher")?;
 
         // Register the watch path.
@@ -139,7 +139,7 @@ impl UserConfig {
 
         // Spawn a new thread to process file watcher events.
         std::thread::spawn(move || {
-            UserConfig::watcher_event_handler(receiver,
+            UserConfig::watcher_event_handler(rx,
                                               user_config_handler,
                                               watch_path);
         });

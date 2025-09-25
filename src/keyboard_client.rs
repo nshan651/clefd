@@ -25,6 +25,9 @@ use xkbcommon::xkb;
 use xkbcommon::xkb::Keycode;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use std::os::fd::AsFd;
+use std::sync::mpsc::Sender;
+use std::process::Child;
+use std::process::Stdio;
 
 /// A simple interface for libinput to open and close devices.
 /// This is required by libinput to interact with the underlying system devices.
@@ -53,13 +56,18 @@ impl LibinputInterface for Interface {
 pub struct KeyboardClient {
     user_config: Arc<RwLock<UserConfig>>,
     chord_state: ChordState,
+    child_tx: Sender<Child>,
 }
 
 impl KeyboardClient {
-    pub fn new(user_config: Arc<RwLock<UserConfig>>, chord_state: ChordState) -> Self {
+    pub fn new(user_config: Arc<RwLock<UserConfig>>,
+               chord_state: ChordState,
+               child_tx: Sender<Child>,
+    ) -> Self {
         Self {
             user_config,
             chord_state,
+            child_tx,
         }
     }
 
@@ -176,7 +184,7 @@ impl KeyboardClient {
             .read()
             .map_err(|e| anyhow!("Failed to acquire read lock on keybindings map: {}", e))?;
 
-        let raw_command = match keybindings_guard.get(keychord) {
+        let raw_command: &String = match keybindings_guard.get(keychord) {
             Some(cmd) => cmd,
             None => return Ok(()),
         };
@@ -187,28 +195,24 @@ impl KeyboardClient {
         let args = &parts[1..];
 
         let mut command = Command::new(program);
-        command.args(args);
-
+        command
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+            
         debug!("Executing '{}' with args: {:?}", program, args);
 
-        let mut child = command
+        let child = command
             .spawn()
             .context(format!("Failed to spawn command '{}'", raw_command))?;
 
-        let status = child.wait().context(format!(
-            "Failed to wait for command '{}' to complete.",
-            raw_command
-        ))?;
+        debug!("Spawned process '{}' (PID {})", raw_command, child.id());
 
-        if status.success() {
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "Command '{}' exited with non-zero status: {:?}",
-                raw_command,
-                status,
-            ))
-        }
+        // Send the child to the reaper.
+        self.child_tx.send(child)
+            .map_err(|e| anyhow!("Failed to send child process to reaper: {}", e))?;
+
+        Ok(())
     }
 }
 

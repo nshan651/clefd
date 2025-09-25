@@ -10,8 +10,10 @@ use signal_hook::{
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use std::sync::mpsc::Sender;
 use xkbcommon::xkb;
+use std::sync::mpsc::{Sender, channel};
+use std::thread;
+use std::process::Child;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "A keyboard shortcut manager daemon.", long_about = None)]
@@ -41,6 +43,15 @@ fn run(keep_running: Arc<AtomicBool>,
         for sig in signals.forever() {
             info!("\nReceived signal {:?}, shutting down daemon...", sig);
             keep_running_handler.store(false, Ordering::SeqCst);
+        }
+    });
+
+    // Setup reaper thread.
+    let (tx, rx) = channel::<Child>();
+
+    thread::spawn(move || {
+        for mut child in rx {
+            let _ = child.wait();
         }
     });
 
@@ -80,7 +91,7 @@ fn run(keep_running: Arc<AtomicBool>,
     UserConfig::start_watcher(&shared_user_config)
         .expect("Failed to start watcher thread.");
 
-    let mut kb_client = KeyboardClient::new(shared_user_config, chord_state);
+    let mut kb_client = KeyboardClient::new(shared_user_config, chord_state, tx);
 
     // Notify tests that setup is complete via handshake.
     if let Some(tx) = ready_tx {
@@ -142,7 +153,7 @@ mod tests {
         // Send SIGINT to this process via signal-hook's helper.
         signal_hook::low_level::raise(SIGINT).expect("Failed to raise SIGINT.");
 
-        // Join the thread (main should exit after handling the signal).
+        // Wait for the completion of main().
         let result = handle.join().expect("Main thread should exit cleanly.");
 
         assert!(result.is_ok(),
