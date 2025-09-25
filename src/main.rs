@@ -134,11 +134,10 @@ mod tests {
 
     #[test]
     fn main_should_start_and_stop_on_sigint() {
-        let handle = thread::spawn(|| {
-            super::main()
-        });
+        let handle = thread::spawn(|| super::main());
 
-        thread::sleep(Duration::from_secs(1));
+        // Sleep until signal thread spawns.
+        thread::sleep(Duration::from_millis(100));
 
         // Send SIGINT to this process via signal-hook's helper.
         signal_hook::low_level::raise(SIGINT).expect("Failed to raise SIGINT.");

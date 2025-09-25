@@ -23,6 +23,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use xkbcommon::xkb;
 use xkbcommon::xkb::Keycode;
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+use std::os::fd::AsFd;
 
 /// A simple interface for libinput to open and close devices.
 /// This is required by libinput to interact with the underlying system devices.
@@ -134,6 +136,14 @@ impl KeyboardClient {
 
         // Process incoming libinput events.
         while keep_running.load(Ordering::SeqCst) {
+            let mut fds = [PollFd::new(libinput.as_fd(), PollFlags::POLLIN)];
+
+            match poll(&mut fds, PollTimeout::NONE) {
+                Ok(_) => (),
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(e) => return Err(anyhow!("Poll failed: {}", e)),
+            }
+
             // Dispatch events from libinput.
             libinput
                 .dispatch()
