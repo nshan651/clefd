@@ -6,68 +6,48 @@
 //! the module automatically watches the file for changes, reloading keybindings
 //! on the fly. Parsing errors and I/O issues are surfaced using [`anyhow`] and
 //! logged via [`log`] to help users diagnose problems quickly.
-
+use crate::keybindings::Keybindings;
 use anyhow::{anyhow, Context, Result};
 use log::{error, info};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, RwLock};
+use std::sync::{mpsc, Arc};
 
-pub struct UserConfig {
-    pub keybindings: Arc<RwLock<HashMap<String, String>>>,
-    config_path: PathBuf,
-    file_watcher: Option<Box<dyn Watcher + Send + Sync>>,
-}
+pub struct UserConfig;
 
 impl UserConfig {
-    /// Initializes a new `UserConfig`.
-    pub fn new(config_path: PathBuf) -> Result<Self> {
-        info!("Loading user configuration from {:?}", config_path);
-        let keybindings = Self::read_config(&config_path)?;
-
-        Ok(UserConfig {
-            keybindings: Arc::new(RwLock::new(keybindings)),
-            config_path,
-            file_watcher: None,
-        })
-    }
-
     /// Read in the config file for the first time.
-    fn read_config(config_path: &Path) -> Result<HashMap<String, String>> {
+    fn read_config(
+        config_path: &Path
+    ) -> Result<HashMap<String, String>> {
         let content = fs::read_to_string(config_path)
             .context(format!("Failed to read config at {:?}", config_path))?;
-        Self::parse_config(&content)
-            .context(format!("Failed to parse config file at {:?}", config_path))
-    }
 
-    /// Re-parse the config file when changes are detected.
-    fn reload_config(&mut self) -> Result<()> {
-        info!("Reloading keybindings from {:?}", self.config_path);
-
-        let updated_keybindings = Self::read_config(&self.config_path)?;
-
-        // Acquire a write lock on the keybindings to replace its contents.
-        let mut keybindings_guard = self.keybindings.write().map_err(|e| {
-            anyhow!(
-                "Failed to acquire a write lock for the \
-                  keybindings struct during reload: {}",
-                e
-            )
-        })?;
-
-        *keybindings_guard = updated_keybindings;
-        Ok(())
-    }
-
-    /// Parse the config into a mapping of keybindings and commands to execute.
-    fn parse_config(content: &str) -> Result<HashMap<String, String>> {
+        // Parse the config into a mapping of keybindings and commands to execute.
         content
             .lines()
             .enumerate()
             .filter_map(|(line_num, line)| Self::parse_line(line, line_num))
             .collect::<Result<HashMap<String, String>>>()
+    }
+
+    /// Re-parse the config file when changes are detected.
+    fn reload_config(
+        config_path: &Path,
+        keybindings: &Keybindings
+    ) -> Result<()> {
+        info!("Reloading keybindings from {:?}", config_path);
+
+        let updated_keybindings = Self::read_config(config_path)?;
+
+        // Acquire a write lock on the keybindings to replace its contents.
+        let mut guard = keybindings.write()
+            .expect("Failed to acquire write lock to update keybindings.");
+
+        *guard = updated_keybindings;
+        Ok(())
     }
 
     fn parse_line(line: &str, line_num: usize) -> Option<Result<(String, String)>> {
@@ -111,14 +91,13 @@ impl UserConfig {
         Some(Ok((key, value)))
     }
 
-    pub fn start_watcher(user_config: &Arc<RwLock<Self>>) -> Result<()> {
-        let watch_path = {
-            // Acquire a read lock to get the config file path, then clone it.
-            let config_guard = user_config
-                .read()
-                .map_err(|e| anyhow!("Failed to acquire read lock for config path: {}", e))?;
-            config_guard.config_path.clone()
-        };
+    pub fn start_watcher(
+        config_path: PathBuf,
+        keybindings: Keybindings
+    ) -> Result<RecommendedWatcher> {
+        // Initial reading of keybindings.
+        Self::reload_config(&config_path, &keybindings)
+            .expect("Could not reload config.");
 
         // Set up a channel to receive events from the file watcher.
         let (tx, rx) = mpsc::channel();
@@ -129,32 +108,16 @@ impl UserConfig {
 
         // Register the watch path.
         watcher
-            .watch(&watch_path, RecursiveMode::NonRecursive)
-            .context(format!("Failed to watch config file at {:?}", watch_path))?;
+            .watch(config_path.parent().unwrap(), RecursiveMode::NonRecursive)
+            .context(format!("Failed to watch config file at {:?}", config_path))?;
 
-        info!("Watching configuration file for changes: {:?}", watch_path);
+        info!("Watching configuration file for changes: {:?}", config_path);
 
-        // Pass a handler to the watcher thread, allowing it to interact with UserConfig.
-        let user_config_handler = Arc::clone(user_config);
-
-        // Spawn a new thread to process file watcher events.
         std::thread::spawn(move || {
-            UserConfig::watcher_event_handler(rx,
-                                              user_config_handler,
-                                              watch_path);
+            Self::watcher_event_handler(rx, config_path, keybindings);
         });
 
-        // Store the watcher handle within the UserConfig instance to keep it alive.
-        let mut config_guard = user_config.write().map_err(|e| {
-            anyhow!(
-                "Failed to acquire write lock to store \
-                  watcher handle: {}",
-                e
-            )
-        })?;
-
-        config_guard.file_watcher = Some(Box::new(watcher));
-        Ok(())
+        Ok(watcher)
     }
 
     /// Handles events on the watcher thread.
@@ -164,34 +127,19 @@ impl UserConfig {
     /// of EventKind::Modify.
     fn watcher_event_handler(
         receiver: mpsc::Receiver<Result<notify::Event, notify::Error>>,
-        user_config: Arc<RwLock<UserConfig>>,
-        watch_path: PathBuf,
+        config_path: PathBuf,
+        keybindings: Keybindings,
     ) {
         for event_result in receiver {
             match event_result {
                 Ok(event) => {
                     if event.kind.is_modify() {
                         info!("Configuration file modified, reloading...");
-                        // Capture the reload attempt in a closure.
-                        let reload_attempt = (|| {
-                            // Acquire a write lock on the UserConfig to call
-                            // its internal reload method.
-                            let mut config_guard = user_config.write().map_err(|e| {
-                                anyhow!(
-                                    "Failed to acquire write lock on UserConfig \
-                     for reload: {}",
-                                    e
-                                )
-                            })?;
-
-                            config_guard.reload_config()
-                        })();
-
-                        if let Err(e) = reload_attempt {
+                        if let Err(e) = Self::reload_config(&config_path, &keybindings) {
                             error!("Failed to reload keybindings: {}", e);
-                        } else {
-                            info!("Keybindings reloaded successfully from {:?}",
-                                  watch_path);
+                        }
+                        else {
+                            info!("Keybindings reloaded successfully from {:?}", config_path);
                         }
                     }
                 }

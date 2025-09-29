@@ -14,6 +14,7 @@ use xkbcommon::xkb;
 use std::sync::mpsc::{Sender, channel};
 use std::thread;
 use std::process::Child;
+use std::collections::HashMap;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "A keyboard shortcut manager daemon.", long_about = None)]
@@ -80,18 +81,19 @@ fn run(keep_running: Arc<AtomicBool>,
         .ok_or_else(|| anyhow!("Could not determine user config directory."))?;
     let config_path = config_dir.join("clefd").join("clefdrc");
 
-    // Load user config and wrap it for shared access.
-    let user_config = UserConfig::new(config_path)
-        .expect("User config failed to initialize.");
-    let shared_user_config = Arc::new(RwLock::new(user_config));
-
     let chord_state = ChordState::new();
 
-    // Start config file watcher.
-    UserConfig::start_watcher(&shared_user_config)
+    let keybindings = Arc::new(RwLock::new(HashMap::new()));
+
+    // Start user config file watcher.
+    let _watcher = UserConfig::start_watcher(config_path, keybindings.clone())
         .expect("Failed to start watcher thread.");
 
-    let mut kb_client = KeyboardClient::new(shared_user_config, chord_state, tx);
+    let mut kb_client = KeyboardClient::new(
+        keybindings.clone(),
+        chord_state,
+        tx,
+    );
 
     // Notify tests that setup is complete via handshake.
     if let Some(tx) = ready_tx {

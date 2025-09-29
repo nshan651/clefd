@@ -8,7 +8,7 @@
 //! [`ChordState`], matches completed chords against user-defined keybindings
 //! from [`UserConfig`], and executes the corresponding shell commands.
 use crate::chord_state::ChordState;
-use crate::user_config::UserConfig;
+use crate::keybindings::Keybindings;
 use anyhow::{anyhow, Context, Result};
 use input::{
     event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait},
@@ -20,7 +20,7 @@ use std::os::unix::{fs::OpenOptionsExt, io::OwnedFd};
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use xkbcommon::xkb;
 use xkbcommon::xkb::Keycode;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
@@ -54,18 +54,19 @@ impl LibinputInterface for Interface {
 /// Define a KeyboardClient, which includes the user's config data and a global
 /// chord state.
 pub struct KeyboardClient {
-    user_config: Arc<RwLock<UserConfig>>,
+    keybindings: Keybindings,
     chord_state: ChordState,
     child_tx: Sender<Child>,
 }
 
 impl KeyboardClient {
-    pub fn new(user_config: Arc<RwLock<UserConfig>>,
-               chord_state: ChordState,
-               child_tx: Sender<Child>,
+    pub fn new(
+        keybindings: Keybindings,
+        chord_state: ChordState,
+        child_tx: Sender<Child>,
     ) -> Self {
         Self {
-            user_config,
+            keybindings,
             chord_state,
             child_tx,
         }
@@ -172,19 +173,24 @@ impl KeyboardClient {
 
     /// Execute an action based on the key press.
     fn exec_action(&self, keychord: &str) -> Result<()> {
-        // Acquire a lock on the UserConfig.
-        let user_config_guard = self
-            .user_config
-            .read()
-            .map_err(|e| anyhow!("Failed to acquire read lock on user config: {}", e))?;
+        // // Acquire a lock on the UserConfig.
+        // let user_config_guard = self
+        //     .user_config
+        //     .read()
+        //     .map_err(|e| anyhow!("Failed to acquire read lock on user config: {}", e))?;
 
-        // Now acquire a lock on the keybindings themselves.
-        let keybindings_guard = user_config_guard
-            .keybindings
-            .read()
-            .map_err(|e| anyhow!("Failed to acquire read lock on keybindings map: {}", e))?;
+        // // Now acquire a lock on the keybindings themselves.
+        // let keybindings_guard = user_config_guard
+        //     .keybindings
+        //     .read()
+        //     .map_err(|e| anyhow!("Failed to acquire read lock on keybindings map: {}", e))?;
 
-        let raw_command: &String = match keybindings_guard.get(keychord) {
+        // Acquire a lock on the keybindings.
+        let guard = self.keybindings
+            .read()
+            .expect("Failed to acquire read lock on keybindings map: {}");
+
+        let raw_command: &String = match guard.get(keychord) {
             Some(cmd) => cmd,
             None => return Ok(()),
         };
