@@ -8,12 +8,13 @@
 //! logged via [`log`] to help users diagnose problems quickly.
 use crate::keybindings::Keybindings;
 use anyhow::{anyhow, Context, Result};
-use log::{error, info};
+use log::{error, info, debug};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
+use std::time::{Duration, Instant};
 
 pub struct UserConfig;
 
@@ -130,22 +131,34 @@ impl UserConfig {
         config_path: PathBuf,
         keybindings: Keybindings,
     ) {
+        let mut last_reload = Instant::now() - Duration::from_secs(1);
+
         for event_result in receiver {
             match event_result {
                 Ok(event) => {
                     if event.kind.is_modify() {
-                        info!("Configuration file modified, reloading...");
-                        if let Err(e) = Self::reload_config(&config_path, &keybindings) {
-                            error!("Failed to reload keybindings: {}", e);
-                        }
-                        else {
-                            info!("Keybindings reloaded successfully from {:?}", config_path);
+                        let now = Instant::now();
+
+                        // Only reload if at least 50ms have passed since last reload
+                        if now.duration_since(last_reload) > Duration::from_millis(50) {
+                            // Tiny sleep to let editor finish writing
+                            std::thread::sleep(Duration::from_millis(20));
+
+                            info!("Configuration file modified, reloading...");
+                            if let Err(e) = Self::reload_config(&config_path, &keybindings) {
+                                error!("Failed to reload keybindings: {}", e);
+                            } else {
+                                info!("Keybindings reloaded successfully from {:?}", config_path);
+                            }
+
+                            last_reload = now;
                         }
                     }
                 }
                 Err(e) => error!("Configuration watch error: {:?}", e),
             }
         }
+
         info!("Configuration watcher thread exiting.");
     }
 }
