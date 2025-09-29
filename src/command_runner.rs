@@ -1,19 +1,21 @@
 // command_runner.rs
-use crate::keybindings::Keybindings;
+use std::sync::mpsc::channel;
 use anyhow::{anyhow, Context, Result};
-use log::{error, info};
+use log::debug;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
 use std::thread;
 
 pub struct CommandRunner {
-    keybindings: Keybindings,
+    keybindings: Arc<RwLock<HashMap<String, String>>>,
     tx: Sender<Child>,
 }
 
 impl CommandRunner {
     /// Initializes the command runner, including the child reaper thread.
-    pub fn init(keybindings: Keybindings) -> Self {
+    pub fn new(keybindings: Arc<RwLock<HashMap<String, String>>>) -> Self {
         let (tx, rx) = channel::<Child>();
 
         thread::spawn(move || {
@@ -30,21 +32,14 @@ impl CommandRunner {
 
     /// Execute an action based on the key press.
     pub fn exec_action(&self, keychord: &str) -> Result<()> {
-        // Acquire a lock on the UserConfig.
-        let user_config_guard = self
-            .user_config
-            .read()
-            .map_err(|e| anyhow!("Failed to acquire read lock on user config: {}", e))?;
-
-        // Now acquire a lock on the keybindings themselves.
-        let keybindings_guard = user_config_guard
-            .keybindings
+        // Acquire a lock on the keybindings.
+        let keybindings_guard = self.keybindings
             .read()
             .map_err(|e| anyhow!("Failed to acquire read lock on keybindings map: {}", e))?;
 
         let raw_command: &String = match keybindings_guard.get(keychord) {
             Some(cmd) => cmd,
-            None => return Ok(()),
+            _ => return Ok(()),
         };
 
         // Split on whitespace.

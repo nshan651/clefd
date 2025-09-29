@@ -3,6 +3,7 @@ use clap::Parser;
 use clefd::chord_state::ChordState;
 use clefd::keyboard_client::KeyboardClient;
 use clefd::user_config::UserConfig;
+use clefd::command_runner::CommandRunner;
 use log::info;
 use signal_hook::{
     consts::{SIGINT, SIGTERM},
@@ -14,6 +15,7 @@ use xkbcommon::xkb;
 use std::sync::mpsc::{Sender, channel};
 use std::thread;
 use std::process::Child;
+use std::collections::HashMap;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "A keyboard shortcut manager daemon.", long_about = None)]
@@ -21,6 +23,7 @@ struct Args {
     // Empty implementation.
 }
 
+/*
 fn run(keep_running: Arc<AtomicBool>,
        ready_tx: Option<Sender<()>>
 ) -> Result<()> {
@@ -108,14 +111,6 @@ fn run(keep_running: Arc<AtomicBool>,
 
     Ok(())
 }
-
-/*
-/// Main entry point for the application.
-fn main() -> Result<()> {
-    Args::parse();
-    let keep_running = Arc::new(AtomicBool::new(true));
-    run(keep_running, None)
-}
 */
 
 /// Main entry point for the application.
@@ -137,20 +132,31 @@ fn main() -> Result<()> {
     let keybindings = Arc::new(RwLock::new(HashMap::new()));
 
     // Read in config and start file watcher.
-    UserConfig::init(config_path, keybindings.clone());
+    let mut user_config = UserConfig::new(config_path, keybindings.clone())
+        .expect("Failed to initialize user config.");
+    user_config.start_watcher();
+    // todo!("Maybe make this module static instead?");
 
     // Setup process reaper thread.
-    CommandRunner::init(keybindings.clone());
-
-    // Setup xkb state
-    // Also register signals/spawn signal thread here
-    let kb_client = KeyboardClient::new(); // chord_state part of the kbd client
+    let command_runner = CommandRunner::new(keybindings.clone());
 
     // This is a function param in the event listener to make it more testable.
     // Not sure if I'll stick with that though
     let keep_running = Arc::new(AtomicBool::new(true));
 
-    kb_client.keyboard_event_listener(keep_running);
+    // Setup xkb state
+    // Also register signals/spawn signal thread here
+    let mut kb_client = KeyboardClient::new(keep_running.clone(), command_runner)
+        .expect("Failed to initialize kb client.");
+
+    info!("Daemon started...");
+
+    // Run the main event loop.
+    kb_client.keyboard_event_listener()?; 
+
+    info!("Daemon stopped.");
+
+    Ok(())
 }
 
 #[cfg(test)]

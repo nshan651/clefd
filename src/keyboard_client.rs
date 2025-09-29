@@ -8,11 +8,15 @@
 //! [`ChordState`], matches completed chords against user-defined keybindings
 //! from [`UserConfig`], and executes the corresponding shell commands.
 use crate::chord_state::ChordState;
-use crate::user_config::UserConfig;
+use crate::command_runner::CommandRunner;
 use anyhow::{anyhow, Context, Result};
 use input::{
     event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait},
     Libinput, LibinputInterface,
+};
+use signal_hook::{
+    consts::{SIGINT, SIGTERM},
+    iterator::Signals,
 };
 use log::{debug, info};
 use std::fs::OpenOptions;
@@ -22,7 +26,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use xkbcommon::xkb;
-use xkbcommon::xkb::Keycode;
+use xkbcommon::xkb::{keysyms, Keycode, Keysym};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use std::os::fd::AsFd;
 use std::sync::mpsc::Sender;
@@ -54,21 +58,53 @@ impl LibinputInterface for Interface {
 /// Define a KeyboardClient, which includes the user's config data and a global
 /// chord state.
 pub struct KeyboardClient {
-    user_config: Arc<RwLock<UserConfig>>,
+    xkb_state: xkb::State,
     chord_state: ChordState,
-    child_tx: Sender<Child>,
+    command_runner: CommandRunner,
+    keep_running: Arc<AtomicBool>,
 }
 
 impl KeyboardClient {
-    pub fn new(user_config: Arc<RwLock<UserConfig>>,
-               chord_state: ChordState,
-               child_tx: Sender<Child>,
-    ) -> Self {
-        Self {
-            user_config,
-            chord_state,
-            child_tx,
-        }
+    pub fn new(
+        keep_running: Arc<AtomicBool>,
+        command_runner: CommandRunner,
+    ) -> Result<Self> {
+        // Register a signal handler for SIGINT and SIGTERM to ensure graceful shutdowns.
+        let mut signals = Signals::new(&[SIGINT, SIGTERM])
+            .context("Failed to register signal handlers.")?;
+
+        // Set up an atomic boolean to control the main loop.
+        // This allows us to gracefully shut down from a signal handler.
+        let keep_running_handler = keep_running.clone();
+
+        // Spawn a thread to listen for signals.
+        std::thread::spawn(move || {
+            for sig in signals.forever() {
+                info!("\nReceived signal {:?}, shutting down daemon...", sig);
+                keep_running_handler.store(false, Ordering::SeqCst);
+            }
+        });
+
+        // Initialize the XKB context.
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+
+        // Create a keymap from the system's current keyboard configuration.
+        let keymap = xkb::Keymap::new_from_names(
+            &context,
+            "",   // rules
+            "",   // model
+            "",   // layout
+            "",   // variant
+            None, // options
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        ).ok_or_else(|| anyhow!("Failed to create XKB keymap."))?;
+
+        Ok(Self { 
+            xkb_state: xkb::State::new(&keymap),
+            chord_state: ChordState::new(),
+            command_runner,
+            keep_running: Arc::new(AtomicBool::new(true)),
+        })
     }
 
     /// Handles a single keyboard event.
@@ -77,17 +113,15 @@ impl KeyboardClient {
     /// keys, and triggers actions for completed key chords.
     ///
     /// # Arguments
-    /// - `state` - A mutable reference to the XKB state.
     /// - `event` - The keyboard event to process.
     fn keyboard_event_handler(
         &mut self,
-        state: &mut xkb::State,
         event: &KeyboardEvent,
     ) -> Result<()> {
         // The keycode from libinput needs a +8 offset to match XKB keycodes.
         let xkb_code: Keycode = (event.key() + 8).into();
         let key_state: KeyState = event.key_state();
-        let keysym = state.key_get_one_sym(xkb_code);
+        let keysym = self.xkb_state.key_get_one_sym(xkb_code);
         let key_name = xkb::keysym_get_name(keysym);
 
         match key_state {
@@ -100,8 +134,8 @@ impl KeyboardClient {
 
                 // A non-modifier signals the end of a key sequence.
                 if !ChordState::is_modifier_keysym(keysym) {
-                    if let Some(keychord) = self.chord_state.get_keychord(state) {
-                        self.exec_action(&keychord)?;
+                    if let Some(keychord) = self.chord_state.get_keychord(&self.xkb_state) {
+                        self.command_runner.exec_action(&keychord)?;
                     }
                 }
             }
@@ -123,12 +157,9 @@ impl KeyboardClient {
     /// to listen for keyboard events.
     ///
     /// # Arguments
-    /// - `state` - The XKB state object.
     /// - `keep_running` - An atomic boolean to control the event loop.
     pub fn keyboard_event_listener(
         &mut self,
-        mut state: xkb::State,
-        keep_running: Arc<AtomicBool>,
     ) -> Result<()> {
         // Create a libinput context with a udev backend.
         // This allows libinput to discover and manage input devices automatically.
@@ -143,7 +174,7 @@ impl KeyboardClient {
         info!("Event loop started. Waiting for keyboard input...");
 
         // Process incoming libinput events.
-        while keep_running.load(Ordering::SeqCst) {
+        while self.keep_running.load(Ordering::SeqCst) {
             let mut fds = [PollFd::new(libinput.as_fd(), PollFlags::POLLIN)];
 
             match poll(&mut fds, PollTimeout::NONE) {
@@ -161,56 +192,11 @@ impl KeyboardClient {
             for event in &mut libinput {
                 // We only care about keyboard events.
                 if let input::Event::Keyboard(kb_event) = event {
-                    self.keyboard_event_handler(&mut state, &kb_event)
+                    self.keyboard_event_handler(&kb_event)
                         .unwrap_or_else(|e| eprintln!("Failed to handle event: {}", e));
                 }
             }
         }
-
-        Ok(())
-    }
-
-    /// Execute an action based on the key press.
-    fn exec_action(&self, keychord: &str) -> Result<()> {
-        // Acquire a lock on the UserConfig.
-        let user_config_guard = self
-            .user_config
-            .read()
-            .map_err(|e| anyhow!("Failed to acquire read lock on user config: {}", e))?;
-
-        // Now acquire a lock on the keybindings themselves.
-        let keybindings_guard = user_config_guard
-            .keybindings
-            .read()
-            .map_err(|e| anyhow!("Failed to acquire read lock on keybindings map: {}", e))?;
-
-        let raw_command: &String = match keybindings_guard.get(keychord) {
-            Some(cmd) => cmd,
-            None => return Ok(()),
-        };
-
-        // Split on whitespace.
-        let parts: Vec<&str> = raw_command.split_whitespace().collect();
-        let program = &parts[0];
-        let args = &parts[1..];
-
-        let mut command = Command::new(program);
-        command
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-            
-        debug!("Executing '{}' with args: {:?}", program, args);
-
-        let child = command
-            .spawn()
-            .context(format!("Failed to spawn command '{}'", raw_command))?;
-
-        debug!("Spawned process '{}' (PID {})", raw_command, child.id());
-
-        // Send the child to the reaper.
-        self.child_tx.send(child)
-            .map_err(|e| anyhow!("Failed to send child process to reaper: {}", e))?;
 
         Ok(())
     }

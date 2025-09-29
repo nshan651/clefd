@@ -6,7 +6,6 @@
 //! the module automatically watches the file for changes, reloading keybindings
 //! on the fly. Parsing errors and I/O issues are surfaced using [`anyhow`] and
 //! logged via [`log`] to help users diagnose problems quickly.
-
 use anyhow::{anyhow, Context, Result};
 use log::{error, info};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
