@@ -134,31 +134,41 @@ impl UserConfig {
         let mut last_reload = Instant::now() - Duration::from_secs(1);
 
         for event_result in receiver {
-            match event_result {
-                Ok(event) => {
-                    if event.kind.is_modify() {
-                        let now = Instant::now();
-
-                        // Only reload if at least 50ms have passed since last reload
-                        if now.duration_since(last_reload) > Duration::from_millis(50) {
-                            // Tiny sleep to let editor finish writing
-                            std::thread::sleep(Duration::from_millis(20));
-
-                            info!("Configuration file modified, reloading...");
-                            if let Err(e) = Self::reload_config(&config_path, &keybindings) {
-                                error!("Failed to reload keybindings: {}", e);
-                            } else {
-                                info!("Keybindings reloaded successfully from {:?}", config_path);
-                            }
-
-                            last_reload = now;
-                        }
-                    }
+            let event = match event_result {
+                Ok(ev) => ev,
+                Err(e) => {
+                    error!("Configuration watch error: {:?}", e);
+                    continue;
                 }
-                Err(e) => error!("Configuration watch error: {:?}", e),
-            }
-        }
+            };
 
+            // Only handle modify events.
+            if !event.kind.is_modify() {
+                continue;
+            }
+
+            let now = Instant::now();
+
+            // Debounce check, only reload every 50 ms.
+            if now.duration_since(last_reload) <= Duration::from_millis(50) {
+                debug!("Skipping rapid successive modify event");
+                continue;
+            }
+
+            // Allow the editor to finish writing.
+            std::thread::sleep(Duration::from_millis(20));
+
+            info!("Configuration file modified, reloading...");
+            if let Err(e) = Self::reload_config(&config_path, &keybindings) {
+                error!("Failed to reload keybindings: {}", e);
+            }
+            else {
+                info!("Keybindings reloaded successfully from {:?}", config_path);
+            }
+
+            last_reload = now;
+
+        }
         info!("Configuration watcher thread exiting.");
     }
 }
