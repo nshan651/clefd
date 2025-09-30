@@ -172,18 +172,6 @@ impl KeyboardClient {
 
     /// Execute an action based on the key press.
     fn exec_action(&self, keychord: &str) -> Result<()> {
-        // // Acquire a lock on the UserConfig.
-        // let user_config_guard = self
-        //     .user_config
-        //     .read()
-        //     .map_err(|e| anyhow!("Failed to acquire read lock on user config: {}", e))?;
-
-        // // Now acquire a lock on the keybindings themselves.
-        // let keybindings_guard = user_config_guard
-        //     .keybindings
-        //     .read()
-        //     .map_err(|e| anyhow!("Failed to acquire read lock on keybindings map: {}", e))?;
-
         // Acquire a lock on the keybindings.
         let guard = self.keybindings
             .read()
