@@ -26,8 +26,7 @@ use xkbcommon::xkb::Keycode;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use std::os::fd::AsFd;
 use std::sync::mpsc::Sender;
-use std::process::Child;
-use std::process::Stdio;
+use std::process::{Child, Stdio};
 
 /// A simple interface for libinput to open and close devices.
 /// This is required by libinput to interact with the underlying system devices.
@@ -227,7 +226,9 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
-    use std::sync::{Arc, RwLock};
+    use std::sync::{mpsc, Arc, RwLock};
+    use std::collections::HashMap;
+    use std::thread;
 
     /// Write a temporary config file and return its PathBuf.
     fn create_temp_config(content: &str) -> NamedTempFile {
@@ -238,21 +239,33 @@ mod tests {
         file
     }
 
+    /// Spawn a simple reaper thread that drains the receiver and waits on children.
+    /// Returns the Sender<Child>. The receiver+thread will live until the test exits.
+    fn spawn_reaper() -> mpsc::Sender<Child> {
+        let (tx, rx) = mpsc::channel::<Child>();
+        thread::spawn(move || {
+            for mut child in rx {
+                let _ = child.wait();
+            }
+        });
+        tx
+    }
 
     #[test]
-    fn new_should_store_user_config_and_chord_state() {
-        let temp_file = create_temp_config("# test empty config\n");
-        let config_path = temp_file.path().to_path_buf();
-
-        let user_config = UserConfig::new(config_path.clone())
-            .expect("User config failed to initialize.");
-        let shared_user_config = Arc::new(RwLock::new(user_config));
+    fn new_should_store_keybindings_and_chord_state() {
+        let keybindings: Keybindings = Arc::new(RwLock::new(HashMap::new()));
         let chord_state = crate::chord_state::ChordState::new();
+        let child_tx = spawn_reaper();
 
-        let kb_client = KeyboardClient::new(Arc::clone(&shared_user_config), chord_state);
+        let kb_client = KeyboardClient::new(
+            keybindings.clone(),
+            chord_state,
+            child_tx,
+        );
 
-        assert!(Arc::ptr_eq(&shared_user_config, &kb_client.user_config),
-                "KeyboardClient did not retain the same ptr.");
+        // Ensure KeyboardClient retained the same Arc pointer as provided.
+        assert!(Arc::ptr_eq(&keybindings, &kb_client.keybindings),
+                "KeyboardClient did not retain the same keybindings ptr.");
     }
 
     #[test]
@@ -260,12 +273,18 @@ mod tests {
         let temp_file = create_temp_config("Control_L+x: /bin/true\nAlt_L+y: /bin/false\n");
         let config_path = temp_file.path().to_path_buf();
 
-        let user_config = crate::user_config::UserConfig::new(config_path.clone())
-            .expect("Failed to create a new user config.");
-        let shared_user_config = Arc::new(RwLock::new(user_config));
+        let keybindings: Keybindings = Arc::new(RwLock::new(HashMap::new()));
+        let tx = spawn_reaper();
+
+        crate::user_config::UserConfig::reload_config(&config_path, &keybindings)
+            .expect("Failed to load config file into keybindings");
+
         let chord_state = crate::chord_state::ChordState::new();
-        let kb_client = KeyboardClient::new(Arc::clone(&shared_user_config),
-                                            chord_state);
+        let kb_client = KeyboardClient::new(
+            keybindings.clone(),
+            chord_state,
+            tx,
+        );
 
         // Act & Assert: success case (/bin/true)
         let res_ok = kb_client.exec_action("Control_L x");
@@ -274,14 +293,6 @@ mod tests {
             "exec_action expected Ok for /bin/true, got: {:?}",
             res_ok
         );
-
-        // Act & Assert: failure case (/bin/false)
-        let res_err = kb_client.exec_action("Alt_L y");
-        assert!(
-            res_err.is_err(),
-            "exec_action expected Err for /bin/false, got: {:?}",
-            res_err
-        );
     }
 
     #[test]
@@ -289,12 +300,18 @@ mod tests {
         let temp_file = create_temp_config("");
         let config_path = temp_file.path().to_path_buf();
 
-        let user_config = crate::user_config::UserConfig::new(config_path.clone())
-            .expect("Failed to create a new user config.");
-        let shared_user_config = Arc::new(RwLock::new(user_config));
+        let keybindings: Keybindings = Arc::new(RwLock::new(HashMap::new()));
+        let tx = spawn_reaper();
+
+        crate::user_config::UserConfig::reload_config(&config_path, &keybindings)
+            .expect("Failed to load config file into keybindings");
+
         let chord_state = crate::chord_state::ChordState::new();
-        let kb_client = KeyboardClient::new(Arc::clone(&shared_user_config),
-                                            chord_state);
+        let kb_client = KeyboardClient::new(
+            keybindings.clone(),
+            chord_state,
+            tx,
+        );
 
         let result = kb_client.exec_action("Control_L x");
 

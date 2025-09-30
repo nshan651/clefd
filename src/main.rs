@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use clefd::chord_state::ChordState;
+use clefd::{chord_state::ChordState, keybindings::Keybindings};
 use clefd::keyboard_client::KeyboardClient;
 use clefd::user_config::UserConfig;
 use log::info;
@@ -83,7 +83,7 @@ fn run(keep_running: Arc<AtomicBool>,
 
     let chord_state = ChordState::new();
 
-    let keybindings = Arc::new(RwLock::new(HashMap::new()));
+    let keybindings: Keybindings = Arc::new(RwLock::new(HashMap::new()));
 
     // Start user config file watcher.
     let _watcher = UserConfig::start_watcher(config_path, keybindings.clone())

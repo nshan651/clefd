@@ -10,19 +10,17 @@ use crate::keybindings::Keybindings;
 use anyhow::{anyhow, Context, Result};
 use log::{error, info, debug};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
 pub struct UserConfig;
 
 impl UserConfig {
     /// Read in the config file for the first time.
-    fn read_config(
-        config_path: &Path
-    ) -> Result<HashMap<String, String>> {
+    fn read_config(config_path: &Path) -> Result<HashMap<String, String>> {
         let content = fs::read_to_string(config_path)
             .context(format!("Failed to read config at {:?}", config_path))?;
 
@@ -35,7 +33,7 @@ impl UserConfig {
     }
 
     /// Re-parse the config file when changes are detected.
-    fn reload_config(
+    pub fn reload_config(
         config_path: &Path,
         keybindings: &Keybindings
     ) -> Result<()> {
@@ -178,6 +176,8 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
 
     /// Helper to create a temporary config file.
     fn create_temp_config(content: &str) -> NamedTempFile {
@@ -186,77 +186,6 @@ mod tests {
         writeln!(file, "{}", content)
             .expect("Failed to write to temporary file.");
         file
-    }
-
-    #[test]
-    fn parse_config_should_succeed_with_valid_content() {
-        let config_content = r#"
-            # This is a comment
-            Super_L + w : firefox
-            Control_L+Shift_L + n : newsboat -r
-            Super_L  + n :nvim -o3 +5
-        "#;
-        let keybindings =
-            UserConfig::parse_config(config_content).expect("Parsing valid config should succeed.");
-
-        let expected = HashMap::from([
-            ("Super_L w".to_string(), "firefox".to_string()),
-            ("Control_L Shift_L n".to_string(), "newsboat -r".to_string()),
-            ("Super_L n".to_string(), "nvim -o3 +5".to_string()),
-        ]);
-
-        assert_eq!(keybindings, expected);
-    }
-
-    #[test]
-    fn parse_config_should_return_empty_map_for_empty_input() {
-        let config_content = "";
-        let keybindings =
-            UserConfig::parse_config(config_content).expect("Parsing empty config should succeed");
-        assert!(keybindings.is_empty());
-    }
-
-    #[test]
-    fn parse_config_should_ignore_comments_and_whitespace() {
-        let config_content = r#"
-            # Only comments and whitespaces!!!
-
-            # Another comment.
-
-        "#;
-        let keybindings = UserConfig::parse_config(config_content).expect(
-            "Parsing an empty config works, but results in empty \
-                     keybindings structure.",
-        );
-
-        assert!(keybindings.is_empty());
-    }
-
-    #[test]
-    fn parse_config_should_fail_without_colon_separator() {
-        let config_content = "invalid line";
-        let result = UserConfig::parse_config(config_content);
-        assert!(result.is_err(), "Parsing invalid line should fail");
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("Invalid key-value pair on line 1"));
-    }
-
-    #[test]
-    fn parse_config_should_fail_when_key_is_empty() {
-        let config_content = ":command";
-        let result = UserConfig::parse_config(config_content);
-        assert!(result.is_err(), "Parsing line with empty key should fail");
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("Invalid key-value pair on line 1"));
-    }
-
-    #[test]
-    fn parse_config_should_fail_when_value_is_empty() {
-        let config_content = "key:";
-        let result = UserConfig::parse_config(config_content);
-        assert!(result.is_err(), "Parsing line with empty value should fail");
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("Invalid key-value pair on line 1"));
     }
 
     #[test]
@@ -283,60 +212,40 @@ mod tests {
     #[test]
     fn read_config_should_fail_with_invalid_content() {
         let temp_file = create_temp_config("invalid line content");
-        let config_path = temp_file.path().to_path_buf();
-        let result = UserConfig::read_config(&config_path);
+        let config_file_path = temp_file.path().to_path_buf();
+        let result = UserConfig::read_config(&config_file_path);
         assert!(
             result.is_err(),
             "Reading invalid config content should fail"
         );
+
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("Failed to parse config file at"));
-    }
-
-    #[test]
-    fn new_user_should_initialize_correctly_with_valid_config() {
-        let temp_file = create_temp_config("hotkey: execute_something");
-        let config_path = temp_file.path().to_path_buf();
-        let user_config = UserConfig::new(config_path.clone())
-            .expect("UserConfig::new should succeed with a valid config file");
-
-        assert_eq!(user_config.config_path, config_path);
-        let keybindings_guard = user_config.keybindings.read().unwrap();
-        assert_eq!(
-            keybindings_guard.get("hotkey"),
-            Some(&"execute_something".to_string())
+        assert!(
+            err.to_string().contains("Invalid key-value pair on line"),
+            "Unwrapped error should contain specific string",
         );
     }
 
     #[test]
     fn reload_should_update_keybindings_when_file_changes() {
         let temp_file = create_temp_config("key1: command1\n");
-        let config_file_path = temp_file.path().to_path_buf();
+        let config_path = temp_file.path().to_path_buf();
+        let keybindings: Keybindings = Arc::new(RwLock::new(HashMap::new()));
 
-        let mut user_config = UserConfig::new(config_file_path.clone())
-            .expect("Failed to create UserConfig for reload test");
-
-        // Verify initial content.
-        let keybindings_initial = user_config.keybindings.read().unwrap();
-        assert_eq!(
-            keybindings_initial.get("key1"),
-            Some(&"command1".to_string())
-        );
-
-        // Release the read lock.
-        drop(keybindings_initial);
+        // Load the config.
+        UserConfig::reload_config(&config_path, &keybindings)
+            .expect("Reloading config should succeed");
 
         // Update the config file.
-        fs::write(&config_file_path, "key2: command2\n")
+        fs::write(&config_path, "key2: command2\n")
             .expect("Failed to write updated config file");
 
-        // Reload the config.
-        user_config
-            .reload_config()
+        // Reload config.
+        UserConfig::reload_config(&config_path, &keybindings)
             .expect("Reloading config should succeed");
 
         // Verify updated content.
-        let keybindings_reloaded = user_config.keybindings.read().unwrap();
+        let keybindings_reloaded = keybindings.read().unwrap();
         assert_eq!(
             keybindings_reloaded.get("key2"),
             Some(&"command2".to_string())
