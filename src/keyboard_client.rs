@@ -175,7 +175,7 @@ impl KeyboardClient {
         // Acquire a lock on the keybindings.
         let guard = self.keybindings
             .read()
-            .expect("Failed to acquire read lock on keybindings map: {}");
+            .expect("Failed to acquire read lock on keybindings map.");
 
         let raw_command: &String = match guard.get(keychord) {
             Some(cmd) => cmd,
