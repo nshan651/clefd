@@ -36,6 +36,10 @@ jobs:
       with:
         toolchain: stable
 
+    - name: Run linting check
+      run: |
+        cargo fmt --check
+
     - name: Install cargo-tarpaulin
       # Install tarpaulin via cargo to ensure it's available in the PATH
       run: |

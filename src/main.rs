@@ -1,20 +1,20 @@
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use clefd::{chord_state::ChordState, keybindings::Keybindings};
 use clefd::keyboard_client::KeyboardClient;
 use clefd::user_config::UserConfig;
+use clefd::{chord_state::ChordState, keybindings::Keybindings};
 use log::info;
 use signal_hook::{
     consts::{SIGINT, SIGTERM},
     iterator::Signals,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
-use xkbcommon::xkb;
-use std::sync::mpsc::{Sender, channel};
-use std::thread;
-use std::process::Child;
 use std::collections::HashMap;
+use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Sender};
+use std::sync::{Arc, RwLock};
+use std::thread;
+use xkbcommon::xkb;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "A keyboard shortcut manager daemon.", long_about = None)]
@@ -22,12 +22,9 @@ struct Args {
     // Empty implementation.
 }
 
-fn run(keep_running: Arc<AtomicBool>,
-       ready_tx: Option<Sender<()>>
-) -> Result<()> {
+fn run(keep_running: Arc<AtomicBool>, ready_tx: Option<Sender<()>>) -> Result<()> {
     // Init info logging.
-    let _ = env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info"))
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .is_test(cfg!(test)) // Disable logs during testing.
         .try_init();
 
@@ -36,8 +33,8 @@ fn run(keep_running: Arc<AtomicBool>,
     let keep_running_handler = keep_running.clone();
 
     // Register a signal handler for SIGINT and SIGTERM to ensure graceful shutdowns.
-    let mut signals = Signals::new(&[SIGINT, SIGTERM])
-        .context("Failed to register signal handlers.")?;
+    let mut signals =
+        Signals::new(&[SIGINT, SIGTERM]).context("Failed to register signal handlers.")?;
 
     // Spawn a thread to listen for signals.
     std::thread::spawn(move || {
@@ -77,8 +74,8 @@ fn run(keep_running: Arc<AtomicBool>,
     let xkb_state = xkb::State::new(&keymap);
 
     // Parse config from XDG_CONFIG.
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| anyhow!("Could not determine user config directory."))?;
+    let config_dir =
+        dirs::config_dir().ok_or_else(|| anyhow!("Could not determine user config directory."))?;
     let config_path = config_dir.join("clefd").join("clefdrc");
 
     let chord_state = ChordState::new();
@@ -89,11 +86,7 @@ fn run(keep_running: Arc<AtomicBool>,
     let _watcher = UserConfig::start_watcher(config_path, keybindings.clone())
         .expect("Failed to start watcher thread.");
 
-    let mut kb_client = KeyboardClient::new(
-        keybindings.clone(),
-        chord_state,
-        tx,
-    );
+    let mut kb_client = KeyboardClient::new(keybindings.clone(), chord_state, tx);
 
     // Notify tests that setup is complete via handshake.
     if let Some(tx) = ready_tx {
@@ -120,8 +113,10 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{sync::Arc, sync::atomic::AtomicBool, sync::atomic::Ordering, thread, time::Duration};
     use std::sync::mpsc;
+    use std::{
+        sync::atomic::AtomicBool, sync::atomic::Ordering, sync::Arc, thread, time::Duration,
+    };
 
     #[test]
     fn run_should_start_and_stop() {
@@ -130,8 +125,7 @@ mod tests {
         let kr_clone = keep_running.clone();
 
         let handle = thread::spawn(move || {
-            run(kr_clone, Some(tx))
-                .expect("Daemon should run without setup errors.");
+            run(kr_clone, Some(tx)).expect("Daemon should run without setup errors.");
         });
 
         // Wait until run() signals it is ready.
@@ -158,7 +152,9 @@ mod tests {
         // Wait for the completion of main().
         let result = handle.join().expect("Main thread should exit cleanly.");
 
-        assert!(result.is_ok(),
-                "Main should return Ok(()) after receiving SIGINT.");
+        assert!(
+            result.is_ok(),
+            "Main should return Ok(()) after receiving SIGINT."
+        );
     }
 }

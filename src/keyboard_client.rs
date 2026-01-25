@@ -15,18 +15,18 @@ use input::{
     Libinput, LibinputInterface,
 };
 use log::{debug, info};
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use std::fs::OpenOptions;
+use std::os::fd::AsFd;
 use std::os::unix::{fs::OpenOptionsExt, io::OwnedFd};
 use std::path::Path;
 use std::process::Command;
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use xkbcommon::xkb;
 use xkbcommon::xkb::Keycode;
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-use std::os::fd::AsFd;
-use std::sync::mpsc::Sender;
-use std::process::{Child, Stdio};
 
 /// A simple interface for libinput to open and close devices.
 /// This is required by libinput to interact with the underlying system devices.
@@ -59,11 +59,7 @@ pub struct KeyboardClient {
 }
 
 impl KeyboardClient {
-    pub fn new(
-        keybindings: Keybindings,
-        chord_state: ChordState,
-        child_tx: Sender<Child>,
-    ) -> Self {
+    pub fn new(keybindings: Keybindings, chord_state: ChordState, child_tx: Sender<Child>) -> Self {
         Self {
             keybindings,
             chord_state,
@@ -173,7 +169,8 @@ impl KeyboardClient {
     /// Execute an action based on the key press.
     fn exec_action(&self, keychord: &str) -> Result<()> {
         // Acquire a lock on the keybindings.
-        let guard = self.keybindings
+        let guard = self
+            .keybindings
             .read()
             .expect("Failed to acquire read lock on keybindings map.");
 
@@ -192,7 +189,7 @@ impl KeyboardClient {
             .args(args)
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-            
+
         debug!("Executing '{}' with args: {:?}", program, args);
 
         let child = command
@@ -202,7 +199,8 @@ impl KeyboardClient {
         debug!("Spawned process '{}' (PID {})", raw_command, child.id());
 
         // Send the child to the reaper.
-        self.child_tx.send(child)
+        self.child_tx
+            .send(child)
             .map_err(|e| anyhow!("Failed to send child process to reaper: {}", e))?;
 
         Ok(())
@@ -212,18 +210,16 @@ impl KeyboardClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-    use std::sync::{mpsc, Arc, RwLock};
     use std::collections::HashMap;
+    use std::io::Write;
+    use std::sync::{mpsc, Arc, RwLock};
     use std::thread;
+    use tempfile::NamedTempFile;
 
     /// Write a temporary config file and return its PathBuf.
     fn create_temp_config(content: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new()
-            .expect("Failed to create temporary file.");
-        writeln!(file, "{}", content)
-            .expect("Failed to write to temporary file.");
+        let mut file = NamedTempFile::new().expect("Failed to create temporary file.");
+        writeln!(file, "{}", content).expect("Failed to write to temporary file.");
         file
     }
 
@@ -245,15 +241,13 @@ mod tests {
         let chord_state = crate::chord_state::ChordState::new();
         let child_tx = spawn_reaper();
 
-        let kb_client = KeyboardClient::new(
-            keybindings.clone(),
-            chord_state,
-            child_tx,
-        );
+        let kb_client = KeyboardClient::new(keybindings.clone(), chord_state, child_tx);
 
         // Ensure KeyboardClient retained the same Arc pointer as provided.
-        assert!(Arc::ptr_eq(&keybindings, &kb_client.keybindings),
-                "KeyboardClient did not retain the same keybindings ptr.");
+        assert!(
+            Arc::ptr_eq(&keybindings, &kb_client.keybindings),
+            "KeyboardClient did not retain the same keybindings ptr."
+        );
     }
 
     #[test]
@@ -268,11 +262,7 @@ mod tests {
             .expect("Failed to load config file into keybindings");
 
         let chord_state = crate::chord_state::ChordState::new();
-        let kb_client = KeyboardClient::new(
-            keybindings.clone(),
-            chord_state,
-            tx,
-        );
+        let kb_client = KeyboardClient::new(keybindings.clone(), chord_state, tx);
 
         // Act & Assert: success case (/bin/true)
         let res_ok = kb_client.exec_action("Control_L x");
@@ -295,11 +285,7 @@ mod tests {
             .expect("Failed to load config file into keybindings");
 
         let chord_state = crate::chord_state::ChordState::new();
-        let kb_client = KeyboardClient::new(
-            keybindings.clone(),
-            chord_state,
-            tx,
-        );
+        let kb_client = KeyboardClient::new(keybindings.clone(), chord_state, tx);
 
         let result = kb_client.exec_action("Control_L x");
 

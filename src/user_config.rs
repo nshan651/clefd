@@ -8,13 +8,13 @@
 //! logged via [`log`] to help users diagnose problems quickly.
 use crate::keybindings::Keybindings;
 use anyhow::{anyhow, Context, Result};
-use log::{error, info, debug};
+use log::{debug, error, info};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
 
 pub struct UserConfig;
 
@@ -33,16 +33,14 @@ impl UserConfig {
     }
 
     /// Re-parse the config file when changes are detected.
-    pub fn reload_config(
-        config_path: &Path,
-        keybindings: &Keybindings
-    ) -> Result<()> {
+    pub fn reload_config(config_path: &Path, keybindings: &Keybindings) -> Result<()> {
         info!("Reloading keybindings from {:?}", config_path);
 
         let updated_keybindings = Self::read_config(config_path)?;
 
         // Acquire a write lock on the keybindings to replace its contents.
-        let mut guard = keybindings.write()
+        let mut guard = keybindings
+            .write()
             .expect("Failed to acquire write lock to update keybindings.");
 
         *guard = updated_keybindings;
@@ -92,11 +90,10 @@ impl UserConfig {
 
     pub fn start_watcher(
         config_path: PathBuf,
-        keybindings: Keybindings
+        keybindings: Keybindings,
     ) -> Result<RecommendedWatcher> {
         // Initial reading of keybindings.
-        Self::reload_config(&config_path, &keybindings)
-            .expect("Could not reload config.");
+        Self::reload_config(&config_path, &keybindings).expect("Could not reload config.");
 
         // Set up a channel to receive events from the file watcher.
         let (tx, rx) = mpsc::channel();
@@ -159,13 +156,11 @@ impl UserConfig {
             info!("Configuration file modified, reloading...");
             if let Err(e) = Self::reload_config(&config_path, &keybindings) {
                 error!("Failed to reload keybindings: {}", e);
-            }
-            else {
+            } else {
                 info!("Keybindings reloaded successfully from {:?}", config_path);
             }
 
             last_reload = now;
-
         }
         info!("Configuration watcher thread exiting.");
     }
@@ -174,17 +169,15 @@ impl UserConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
     use std::collections::HashMap;
+    use std::io::Write;
     use std::sync::{Arc, RwLock};
+    use tempfile::NamedTempFile;
 
     /// Helper to create a temporary config file.
     fn create_temp_config(content: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new()
-            .expect("Failed to create temporary file.");
-        writeln!(file, "{}", content)
-            .expect("Failed to write to temporary file.");
+        let mut file = NamedTempFile::new().expect("Failed to create temporary file.");
+        writeln!(file, "{}", content).expect("Failed to write to temporary file.");
         file
     }
 
@@ -237,8 +230,7 @@ mod tests {
             .expect("Reloading config should succeed");
 
         // Update the config file.
-        fs::write(&config_path, "key2: command2\n")
-            .expect("Failed to write updated config file");
+        fs::write(&config_path, "key2: command2\n").expect("Failed to write updated config file");
 
         // Reload config.
         UserConfig::reload_config(&config_path, &keybindings)

@@ -121,7 +121,8 @@ mod tests {
             "",   // variant
             None, // options
             xkb::KEYMAP_COMPILE_NO_FLAGS,
-        ).expect("Failed to create XKB keymap");
+        )
+        .expect("Failed to create XKB keymap");
 
         xkb::State::new(&keymap)
     }
@@ -157,21 +158,20 @@ mod tests {
     fn add_key_should_warn_when_exceeding_capacity() {
         let xkb_state = init_xkb_state();
         let mut state = ChordState::new();
-        
+
         // Fill the hashset to capacity
         for i in 0..MAX_PRESSED_KEYS {
             let keycode = xkb_state.get_keymap().min_keycode().raw() + i as u32;
             state.add_key(keycode.into());
         }
-        
+
         // Verify we have exactly MAX_PRESSED_KEYS
         assert_eq!(state.pressed_keys.len(), MAX_PRESSED_KEYS);
-        
+
         // Try to add one more key - this should trigger the warning and not add the key
-        let extra_keycode =
-            xkb_state.get_keymap().min_keycode().raw() + MAX_PRESSED_KEYS as u32;
+        let extra_keycode = xkb_state.get_keymap().min_keycode().raw() + MAX_PRESSED_KEYS as u32;
         state.add_key(extra_keycode.into());
-        
+
         // Verify the key was not added (still at capacity)
         assert_eq!(state.pressed_keys.len(), MAX_PRESSED_KEYS);
         assert!(!state.pressed_keys.contains(&extra_keycode.into()));

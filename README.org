@@ -1,7 +1,5 @@
 #+title: Clefd
 
-[[CI][https://github.com/nshan651/clefd/actions/workflows/coverage.yml/badge.svg]]
-
 A universal keybindings manager daemon.
 
 ** Usage
