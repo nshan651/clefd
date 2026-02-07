@@ -3,18 +3,34 @@ BINDIR ?= /usr/local/bin
 SYSTEMD_UNIT_DIR ?= $(HOME)/.config/systemd/user
 INIT_SYS = $(shell ps -p 1 -o comm=)
 
-all:
+.PHONY: all build test bench lint doc format update clean install uninstall
+
+all: build test lint doc
+
+build:
 	cargo build --release
 
 test:
 	cargo test
 
-check:
-	cargo fmt -- --check
-	cargo clippy --all-targets --all-features -- -D warnings
+lint:
+	cargo check
+	cargo clippy
+
+doc:
+	cargo doc
 
 cov:
 	cargo tarpaulin --out Html --fail-under 70
+
+bench:
+	cargo bench
+
+format:
+	cargo fmt
+
+update:
+	cargo update
 
 clean:
 	rm -rf ./target
@@ -26,5 +42,3 @@ install:
 uninstall:
 	rm -f $(BINDIR)/$(PKGNAME) \
 		$(SYSTEMD_UNIT_DIR)/$(PKGNAME).service
-
-.PHONY: all clean install uninstall
