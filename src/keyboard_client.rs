@@ -14,7 +14,7 @@ use input::{
     event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait},
     Libinput, LibinputInterface,
 };
-use log::{debug, info};
+use log::{debug, info, warn};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use std::fs::OpenOptions;
 use std::os::fd::AsFd;
@@ -155,10 +155,9 @@ impl KeyboardClient {
 
             // Iterate over all available events from libinput.
             for event in &mut libinput {
-                // We only care about keyboard events.
                 if let input::Event::Keyboard(kb_event) = event {
                     self.keyboard_event_handler(&mut state, &kb_event)
-                        .unwrap_or_else(|e| eprintln!("Failed to handle event: {}", e));
+                        .unwrap_or_else(|e| warn!("Failed to handle event: {}", e));
                 }
             }
         }

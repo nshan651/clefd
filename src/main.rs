@@ -136,7 +136,10 @@ mod tests {
 
         handle.join().expect("Thread should join.");
 
-        assert!(!keep_running.load(Ordering::SeqCst));
+        assert!(
+            !keep_running.load(Ordering::SeqCst),
+            "keep_running should be false after signal handler runs"
+        );
     }
 
     #[test]

@@ -103,8 +103,15 @@ impl UserConfig {
             .context("Failed to create file watcher")?;
 
         // Register the watch path.
+        let config_dir = config_path.parent().ok_or_else(|| {
+            anyhow!(
+                "Config file path has no parent directory: {:?}",
+                config_path
+            )
+        })?;
+
         watcher
-            .watch(config_path.parent().unwrap(), RecursiveMode::NonRecursive)
+            .watch(config_dir, RecursiveMode::NonRecursive)
             .context(format!("Failed to watch config file at {:?}", config_path))?;
 
         info!("Watching configuration file for changes: {:?}", config_path);
