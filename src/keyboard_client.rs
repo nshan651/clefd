@@ -178,18 +178,14 @@ impl KeyboardClient {
             None => return Ok(()),
         };
 
-        // Split on whitespace.
-        let parts: Vec<&str> = raw_command.split_whitespace().collect();
-        let program = &parts[0];
-        let args = &parts[1..];
-
-        let mut command = Command::new(program);
+        // Let the shell deal with it.
+        let mut command = Command::new("sh");
         command
-            .args(args)
+            .args(["-c", raw_command])
             .stdout(Stdio::null())
             .stderr(Stdio::null());
 
-        debug!("Executing '{}' with args: {:?}", program, args);
+        debug!("Executing: '{}'", raw_command);
 
         let child = command
             .spawn()
