@@ -20,6 +20,12 @@ pub struct ChordState {
     pressed_keys: HashSet<xkb::Keycode>,
 }
 
+impl Default for ChordState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChordState {
     /// Creates a new, empty ChordState.
     pub fn new() -> Self {

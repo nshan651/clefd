@@ -34,7 +34,7 @@ fn run(keep_running: Arc<AtomicBool>, ready_tx: Option<Sender<()>>) -> Result<()
 
     // Register a signal handler for SIGINT and SIGTERM to ensure graceful shutdowns.
     let mut signals =
-        Signals::new(&[SIGINT, SIGTERM]).context("Failed to register signal handlers.")?;
+        Signals::new([SIGINT, SIGTERM]).context("Failed to register signal handlers.")?;
 
     // Spawn a thread to listen for signals.
     std::thread::spawn(move || {
