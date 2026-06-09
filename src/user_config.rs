@@ -8,7 +8,7 @@
 //! logged via [`log`] to help users diagnose problems quickly.
 use crate::keybindings::Keybindings;
 use anyhow::{anyhow, Context, Result};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::fs;
@@ -93,7 +93,9 @@ impl UserConfig {
         keybindings: Keybindings,
     ) -> Result<RecommendedWatcher> {
         // Initial reading of keybindings.
-        Self::reload_config(&config_path, &keybindings).expect("Could not reload config.");
+        if let Err(e) = Self::reload_config(&config_path, &keybindings) {
+            warn!("No config file found at {:?}, starting with empty keybindings: {}", config_path, e);
+        }
 
         // Set up a channel to receive events from the file watcher.
         let (tx, rx) = mpsc::channel();
@@ -144,8 +146,13 @@ impl UserConfig {
                 }
             };
 
-            // Only handle modify events.
+            // Only handle modify events for our config file.
             if !event.kind.is_modify() {
+                continue;
+            }
+
+            // Only reload if the event targets our config file.
+            if !event.paths.iter().any(|p| p == &config_path) {
                 continue;
             }
 
@@ -176,9 +183,12 @@ impl UserConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use notify::event::ModifyKind;
     use std::collections::HashMap;
     use std::io::Write;
     use std::sync::{Arc, RwLock};
+    use std::sync::mpsc;
+    use std::thread;
     use tempfile::NamedTempFile;
 
     /// Helper to create a temporary config file.
@@ -250,5 +260,76 @@ mod tests {
             Some(&"command2".to_string())
         );
         assert_eq!(keybindings_reloaded.get("key1"), None);
+    }
+
+    #[test]
+    fn start_watcher_should_handle_missing_config_gracefully() {
+        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
+        let config_path = temp_dir.path().join("clefdrc");
+        // Note: clefdrc is NOT created - simulating a fresh install
+
+        let keybindings: Keybindings = Arc::new(RwLock::new(HashMap::new()));
+
+        let result = UserConfig::start_watcher(config_path, keybindings.clone());
+        assert!(result.is_ok(), "start_watcher should not panic with missing config");
+        assert!(
+            keybindings.read().unwrap().is_empty(),
+            "Keybindings should be empty when no config file exists"
+        );
+    }
+
+    #[test]
+    fn watcher_should_not_reload_on_temp_file_modify_event() {
+        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
+        let config_path = temp_dir.path().join("clefdrc");
+        let temp_file_path = temp_dir.path().join("temp.swp");
+
+        // Write initial config and load it
+        fs::write(&config_path, "key1: command1\n").expect("Failed to write config");
+        let keybindings: Keybindings = Arc::new(RwLock::new(HashMap::new()));
+        UserConfig::reload_config(&config_path, &keybindings)
+            .expect("Failed to load initial config");
+
+        assert_eq!(
+            keybindings.read().unwrap().get("key1").map(|s| s.as_str()),
+            Some("command1")
+        );
+
+        // Create channel and spawn the handler thread
+        let (tx, rx) = mpsc::channel();
+        let handler_keybindings = keybindings.clone();
+        let handler_config_path = config_path.clone();
+
+        let handle = thread::spawn(move || {
+            UserConfig::watcher_event_handler(rx, handler_config_path, handler_keybindings);
+        });
+
+        // Update the config file on disk, then send a Modify event for the temp file only.
+        // If the path filter is broken, the handler would reload the config and pick up key2.
+        // If it works, the temp event is skipped and key1 remains.
+        fs::write(&config_path, "key2: command2\n").expect("Failed to update config");
+        tx.send(Ok(notify::Event {
+            kind: notify::EventKind::Modify(ModifyKind::Any),
+            paths: vec![temp_file_path],
+            attrs: Default::default(),
+        }))
+        .expect("Failed to send temp file event");
+
+        // Drop sender to stop the handler thread
+        drop(tx);
+        handle.join().expect("Handler thread should join");
+
+        // Verify the temp event was skipped — keybindings were NOT reloaded
+        let guard = keybindings.read().unwrap();
+        assert_eq!(
+            guard.get("key1").map(|s| s.as_str()),
+            Some("command1"),
+            "keybindings should still have key1: the temp file event should have been skipped"
+        );
+        assert_eq!(
+            guard.get("key2"),
+            None,
+            "key2 should not be present: the updated config was never loaded"
+        );
     }
 }

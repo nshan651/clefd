@@ -180,6 +180,9 @@ impl KeyboardClient {
 
         // Split on whitespace.
         let parts: Vec<&str> = raw_command.split_whitespace().collect();
+        if parts.is_empty() {
+            return Err(anyhow!("Empty command for keychord '{}'", keychord));
+        }
         let program = &parts[0];
         let args = &parts[1..];
 
@@ -250,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn exec_action_should_execute_success_and_failure() {
+    fn exec_action_should_execute_success() {
         let temp_file = create_temp_config("Control_L+x: /bin/true\nAlt_L+y: /bin/false\n");
         let config_path = temp_file.path().to_path_buf();
 
@@ -292,6 +295,33 @@ mod tests {
             result.is_ok(),
             "exec_action should return Ok(()) when keychord not found, got: {:?}",
             result
+        );
+    }
+
+    #[test]
+    fn exec_action_should_error_on_empty_command() {
+        let keybindings: Keybindings = Arc::new(RwLock::new(HashMap::new()));
+        let tx = spawn_reaper();
+
+        // Insert an empty command directly (parser rejects these, so we bypass it)
+        keybindings
+            .write()
+            .expect("Failed to acquire write lock")
+            .insert("Control_L x".to_string(), "   ".to_string());
+
+        let chord_state = crate::chord_state::ChordState::new();
+        let kb_client = KeyboardClient::new(keybindings.clone(), chord_state, tx);
+
+        let result = kb_client.exec_action("Control_L x");
+
+        assert!(
+            result.is_err(),
+            "exec_action should return Err for empty command, got: {:?}",
+            result
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("Empty command"),
+            "Error should mention empty command"
         );
     }
 
