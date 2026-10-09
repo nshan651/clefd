@@ -5,7 +5,6 @@
 (specifications->manifest
  '("make"
    "rust"
-   "cargo-tarpaulin"
    "pkg-config"
    "libinput"
    "eudev"

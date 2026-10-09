@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn exec_action_should_execute_success_and_failure() {
-        let temp_file = create_temp_config("Control_L+x: /bin/true\nAlt_L+y: /bin/false\n");
+        let temp_file = create_temp_config("Control_L+x: true\nAlt_L+y: false\n");
         let config_path = temp_file.path().to_path_buf();
 
         let keybindings: Keybindings = Arc::new(RwLock::new(HashMap::new()));
